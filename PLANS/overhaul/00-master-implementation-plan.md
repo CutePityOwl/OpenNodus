@@ -298,6 +298,13 @@ This distinction must be kept explicit in code.
 - Frontend can resolve selected node chat session ID.
 - No prompt routing changes yet.
 
+### Implementation Status
+
+- Regenerated the v2 SDK so the frontend has typed `graph` client methods and graph/node types.
+- Added `GraphProvider` for the current graph session, selected node, and selected node chat session ID.
+- Mounted graph state inside the directory-scoped providers.
+- The session page now opens/ensures graph state for `params.id` while still rendering chat from the route session until Phase 5.
+
 ## Phase 5: Per-Node Chat History Display
 
 ### Goal
