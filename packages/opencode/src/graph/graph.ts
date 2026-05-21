@@ -16,6 +16,7 @@ type NodeRow = typeof GraphNodeTable.$inferSelect
 type EdgeRow = typeof GraphEdgeTable.$inferSelect
 
 const defaultPosition = { x: 0, y: 0 }
+const defaultOrchestratorPosition = { x: 0, y: 0 }
 
 function stateFromRow(row: StateRow): State {
   return {
@@ -142,8 +143,69 @@ export const layer = Layer.effect(
       }
     })
 
+    const createDefaultOrchestrator = Effect.fn("Graph.createDefaultOrchestrator")(function* (
+      graphSessionID: SessionID,
+    ) {
+      const now = Date.now()
+      const row: typeof GraphNodeTable.$inferInsert = {
+        id: NodeID.ascending(),
+        graph_session_id: graphSessionID,
+        type: "orchestrator",
+        name: "Orchestrator",
+        same_chat: true,
+        can_spawn_agents: true,
+        current_chat_session_id: graphSessionID,
+        position: defaultOrchestratorPosition,
+        time_created: now,
+        time_updated: now,
+      }
+      yield* db((d) => d.insert(GraphNodeTable).values(row).run())
+      yield* db((d) =>
+        d
+          .update(GraphStateTable)
+          .set({ selected_node_id: row.id, time_updated: now })
+          .where(eq(GraphStateTable.graph_session_id, graphSessionID))
+          .run(),
+      )
+      return nodeFromRow({
+        id: row.id,
+        graph_session_id: graphSessionID,
+        type: "orchestrator",
+        name: row.name,
+        provider_id: null,
+        model_id: null,
+        model: null,
+        instructions: null,
+        same_chat: row.same_chat,
+        can_spawn_agents: row.can_spawn_agents,
+        current_chat_session_id: graphSessionID,
+        position: row.position,
+        size: null,
+        permission: null,
+        tool_policy: null,
+        mcp_policy: null,
+        time_created: now,
+        time_updated: now,
+      })
+    })
+
     const ensure = Effect.fn("Graph.ensure")(function* (graphSessionID: SessionID) {
-      const state = yield* ensureState(graphSessionID)
+      yield* ensureState(graphSessionID)
+      const existingNodes = yield* nodes(graphSessionID)
+
+      if (existingNodes.length === 0) {
+        yield* createDefaultOrchestrator(graphSessionID)
+      } else {
+        const state = yield* getState(graphSessionID).pipe(Effect.orDie)
+        const selectedExists =
+          state.selectedNodeID !== undefined && existingNodes.some((node) => node.id === state.selectedNodeID)
+        if (!selectedExists) {
+          const fallback = existingNodes.find((node) => node.type === "orchestrator") ?? existingNodes[0]
+          yield* updateState({ graphSessionID, patch: { selectedNodeID: fallback.id } }).pipe(Effect.orDie)
+        }
+      }
+
+      const state = yield* getState(graphSessionID).pipe(Effect.orDie)
       return {
         state,
         nodes: yield* nodes(graphSessionID),

@@ -1,6 +1,7 @@
 import { Agent } from "@/agent/agent"
 import { Bus } from "@/bus"
 import { Command } from "@/command"
+import { Graph } from "@/graph/graph"
 import { Permission } from "@/permission"
 import { PermissionID } from "@/permission/schema"
 import { SessionShare } from "@/share/session"
@@ -55,6 +56,7 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     const statusSvc = yield* SessionStatus.Service
     const todoSvc = yield* Todo.Service
     const summary = yield* SessionSummary.Service
+    const graph = yield* Graph.Service
     const bus = yield* Bus.Service
     const scope = yield* Scope.Scope
 
@@ -149,7 +151,9 @@ export const sessionHandlers = HttpApiBuilder.group(InstanceHttpApi, "session", 
     })
 
     const create = Effect.fn("SessionHttpApi.create")(function* (ctx: { payload?: Session.CreateInput }) {
-      return yield* shareSvc.create(ctx.payload)
+      const result = yield* shareSvc.create(ctx.payload)
+      if (!result.parentID) yield* graph.ensure(result.id)
+      return result
     })
 
     const createRaw = Effect.fn("SessionHttpApi.createRaw")(function* (ctx: {

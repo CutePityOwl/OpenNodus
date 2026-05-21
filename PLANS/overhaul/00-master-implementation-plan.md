@@ -243,6 +243,13 @@ Session creation becomes more complex. If graph creation fails after session cre
 - Orchestrator has a valid internal chat session reference.
 - Loading an old session can recover by creating missing graph data.
 
+### Implementation Status
+
+- Added default graph bootstrap to `Graph.Service.ensure`.
+- New top-level session creation now ensures graph records exist before returning.
+- Empty graph recovery now creates one selected Orchestrator node.
+- The default Orchestrator currently uses the graph session itself as its chat session so existing chat behavior remains intact until internal node-chat routing and hidden child sessions are implemented.
+
 ## Phase 4: Selected Node State
 
 ### Goal
