@@ -416,6 +416,13 @@ Local model/agent state may become secondary. Eventually provider/model selectio
 - Busy state follows selected node chat.
 - Existing provider/model execution still works.
 
+### Implementation Status
+
+- Added selected node chat session routing into `PromptInput` and `createPromptSubmit`.
+- Existing-session abort, busy state, auto-accept lookup, optimistic prompt writes, shell sends, command sends, and normal prompt sends now use the selected node chat session ID when one is provided.
+- New session creation still creates/navigates to the graph session first; the default Orchestrator currently maps to that same session, preserving the current first prompt path.
+- Added a prompt submit test that verifies an existing graph route sends to the selected node chat session instead of the route graph session.
+
 ## Phase 7: Basic Graph UI Shell
 
 ### Goal

@@ -172,6 +172,7 @@ export async function sendFollowupDraft(input: FollowupSendInput) {
 
 type PromptSubmitInput = {
   info: Accessor<{ id: string } | undefined>
+  sessionID?: Accessor<string | undefined>
   imageAttachments: Accessor<ImageAttachmentPart[]>
   commentCount: Accessor<number>
   autoAccept: Accessor<boolean>
@@ -223,7 +224,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   }
 
   const abort = async () => {
-    const sessionID = params.id
+    const sessionID = input.sessionID?.() ?? params.id
     if (!sessionID) return Promise.resolve()
 
     globalSync.todo.set(sessionID, [])

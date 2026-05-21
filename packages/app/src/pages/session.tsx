@@ -1776,6 +1776,7 @@ export default function Page() {
             state={composer}
             ready={!store.deferRender && messagesReady()}
             centered={centered()}
+            sessionID={nodeChatSessionID}
             inputRef={(el) => {
               inputRef = el
             }}

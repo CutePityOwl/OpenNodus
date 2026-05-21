@@ -22,6 +22,7 @@ export function SessionComposerRegion(props: {
   state: SessionComposerState
   ready: boolean
   centered: boolean
+  sessionID?: () => string | undefined
   inputRef: (el: HTMLDivElement) => void
   newSessionWorktree: string
   onNewSessionWorktreeReset: () => void
@@ -53,6 +54,7 @@ export function SessionComposerRegion(props: {
   const route = useSessionKey()
   const sync = useSync()
   const view = layout.view(route.sessionKey)
+  const activeSessionID = createMemo(() => props.sessionID?.() ?? route.params.id)
 
   const handoffPrompt = createMemo(() => getSessionHandoff(route.sessionKey())?.prompt)
   const info = createMemo(() => (route.params.id ? sync.session.get(route.params.id) : undefined))
@@ -208,7 +210,7 @@ export function SessionComposerRegion(props: {
               >
                 <div ref={(el) => setStore("body", el)}>
                   <SessionTodoDock
-                    sessionID={route.params.id}
+                    sessionID={activeSessionID()}
                     todos={props.state.todos()}
                     collapsed={view.todoCollapsed.get()}
                     onToggle={() => view.todoCollapsed.set(!view.todoCollapsed.get())}
@@ -257,6 +259,7 @@ export function SessionComposerRegion(props: {
                   <Show when={!props.state.blocked()}>
                     <PromptInput
                       ref={props.inputRef}
+                      sessionID={props.sessionID}
                       newSessionWorktree={props.newSessionWorktree}
                       onNewSessionWorktreeReset={props.onNewSessionWorktreeReset}
                       edit={props.followup?.edit}

@@ -61,6 +61,7 @@ import { pathKey } from "@/utils/path-key"
 interface PromptInputProps {
   class?: string
   ref?: (el: HTMLDivElement) => void
+  sessionID?: () => string | undefined
   newSessionWorktree?: string
   onNewSessionWorktreeReset?: () => void
   edit?: { id: string; prompt: Prompt; context: FollowupDraft["context"] }
@@ -116,6 +117,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const language = useLanguage()
   const platform = usePlatform()
   const { params, tabs, view } = useSessionLayout()
+  const activeSessionID = createMemo(() => props.sessionID?.() ?? params.id)
   let editorRef!: HTMLDivElement
   let fileInputRef: HTMLInputElement | undefined
   let scrollRef!: HTMLDivElement
@@ -172,7 +174,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   }).activeFileTab
 
   const commentInReview = (path: string) => {
-    const sessionID = params.id
+    const sessionID = activeSessionID()
     if (!sessionID) return false
 
     const diffs = sync.data.session_diff[sessionID]
@@ -237,8 +239,11 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
     return paths
   })
-  const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
-  const working = createMemo(() => sync.data.session_working(params.id ?? ""))
+  const info = createMemo(() => {
+    const id = activeSessionID()
+    return id ? sync.session.get(id) : undefined
+  })
+  const working = createMemo(() => sync.data.session_working(activeSessionID() ?? ""))
   const imageAttachments = createMemo(() =>
     prompt.current().filter((part): part is ImageAttachmentPart => part.type === "image"),
   )
@@ -309,7 +314,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   })
 
   const hasUserPrompt = createMemo(() => {
-    const sessionID = params.id
+    const sessionID = activeSessionID()
     if (!sessionID) return false
     const messages = sync.data.message[sessionID]
     if (!messages) return false
@@ -1057,13 +1062,14 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
 
   const variants = createMemo(() => ["default", ...local.model.variant.list()])
   const accepting = createMemo(() => {
-    const id = params.id
+    const id = activeSessionID()
     if (!id) return permission.isAutoAcceptingDirectory(sdk.directory)
     return permission.isAutoAccepting(id, sdk.directory)
   })
 
   const { abort, handleSubmit } = createPromptSubmit({
     info,
+    sessionID: activeSessionID,
     imageAttachments,
     commentCount,
     autoAccept: () => accepting(),
