@@ -620,6 +620,15 @@ Graph cycles are allowed visually for now, but runtime execution must avoid unco
 - Edge direction is visually clear.
 - Deleting nodes removes or invalidates related edges.
 
+### Implementation Status
+
+- Graph context now exposes `createEdge`, `deleteEdge`, `startLink`, and `clearLink`.
+- The graph canvas can create links from an Orchestrator to an Agent by pressing the node link button and then selecting the target node.
+- Solid Flow handle/click connections are persisted through the graph edge API.
+- Duplicate, self, Agent-to-Agent, and Agent-to-Orchestrator links are blocked in the app layer for now.
+- Edges render with directional arrow markers and persist from the existing graph edge store.
+- Edge deletion events are routed back to the graph edge delete API.
+
 ## Phase 11: Node-Level Permissions
 
 ### Goal

@@ -3,12 +3,15 @@ import {
   Background,
   Controls,
   Handle,
+  MarkerType,
   MiniMap,
   NodeResizer,
   Position,
   SolidFlow,
   useSolidFlow,
+  type Connection,
   type Edge,
+  type IsValidConnection,
   type Node,
   type NodeProps,
   type NodeTypes,
@@ -24,7 +27,9 @@ import { useGraph } from "@/context/graph"
 type OpenNodusNodeData = {
   graphNode: GraphNode
   selected: boolean
+  linkingSource: boolean
   onOpenSettings: (nodeID: string) => void
+  onStartLink: (nodeID: string) => void
   onResizeEnd: (nodeID: string, size: { width: number; height: number }) => void
 }
 
@@ -54,7 +59,9 @@ function nodeSize(node: GraphNode) {
 function toFlowNode(
   node: GraphNode,
   selectedNodeID: string | undefined,
+  linkingSourceNodeID: string | undefined,
   onOpenSettings: OpenNodusNodeData["onOpenSettings"],
+  onStartLink: OpenNodusNodeData["onStartLink"],
   onResizeEnd: OpenNodusNodeData["onResizeEnd"],
 ) {
   const size = nodeSize(node)
@@ -68,7 +75,9 @@ function toFlowNode(
     data: {
       graphNode: node,
       selected: selectedNodeID === node.id,
+      linkingSource: linkingSourceNodeID === node.id,
       onOpenSettings,
+      onStartLink,
       onResizeEnd,
     },
     selected: selectedNodeID === node.id,
@@ -85,6 +94,7 @@ function toFlowNode(
 function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
   const node = () => props.data.graphNode
   const selected = () => props.data.selected
+  const linkingSource = () => props.data.linkingSource
 
   const persistSize = (_event: unknown, params: ResizeParams) => {
     props.data.onResizeEnd(props.id, {
@@ -98,7 +108,8 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
       class="relative size-full rounded-md border bg-background-base shadow-sm transition-colors"
       classList={{
         "border-border-strong shadow-md": selected(),
-        "border-border-base": !selected(),
+        "border-icon-info-active shadow-md": linkingSource(),
+        "border-border-base": !selected() && !linkingSource(),
       }}
     >
       <NodeResizer
@@ -131,6 +142,17 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
           </div>
           <div class="min-w-0 flex-1 truncate text-sm font-medium text-text-base">{node().name}</div>
           <div class="text-[10px] font-medium uppercase tracking-normal text-text-weak">{node().type}</div>
+          <IconButton
+            icon="link"
+            variant="ghost"
+            class="nodrag size-7 shrink-0"
+            classList={{ "text-icon-info-active": linkingSource() }}
+            aria-label="Link from this node"
+            onClick={(event) => {
+              event.stopPropagation()
+              props.data.onStartLink(props.id)
+            }}
+          />
           <IconButton
             icon="settings-gear"
             variant="ghost"
@@ -241,6 +263,11 @@ export function SessionGraph() {
     void graph.updateNode(nodeID, { size })
   }
 
+  const startNodeLink = (nodeID: string) => {
+    void graph.selectNode(nodeID)
+    graph.startLink(nodeID)
+  }
+
   const openNodeSettings = (nodeID: string) => {
     void graph.selectNode(nodeID)
     graph.openSettings(nodeID)
@@ -255,7 +282,14 @@ export function SessionGraph() {
     }
 
     const nextNodes = current.nodes.map((node) =>
-      toFlowNode(node, current.state.selectedNodeID, openNodeSettings, persistNodeSize),
+      toFlowNode(
+        node,
+        current.state.selectedNodeID,
+        graph.linkingSourceNodeID,
+        openNodeSettings,
+        startNodeLink,
+        persistNodeSize,
+      ),
     )
     const nextEdges = current.edges.map(
       (edge) =>
@@ -264,7 +298,7 @@ export function SessionGraph() {
           source: edge.sourceNodeID,
           target: edge.targetNodeID,
           type: "smoothstep",
-          animated: true,
+          markerEnd: { type: MarkerType.ArrowClosed },
         }) satisfies OpenNodusFlowEdge,
     )
 
@@ -301,6 +335,49 @@ export function SessionGraph() {
     }
   }
 
+  const createEdge = async (sourceNodeID: string, targetNodeID: string) => {
+    try {
+      await graph.createEdge({ sourceNodeID, targetNodeID })
+    } catch (error) {
+      console.debug("[session-graph] failed to create edge", error)
+      showToast({ title: error instanceof Error ? error.message : "Failed to create graph link" })
+    }
+  }
+
+  const connectNodes = async (connection: Pick<Connection, "source" | "target">) => {
+    if (!connection.source || !connection.target) return
+    await createEdge(connection.source, connection.target)
+  }
+
+  const isValidConnection: IsValidConnection = (connection) => {
+    const current = graph.current()
+    if (!current || !connection.source || !connection.target || connection.source === connection.target) return false
+    const source = current.nodes.find((node) => node.id === connection.source)
+    const target = current.nodes.find((node) => node.id === connection.target)
+    if (source?.type !== "orchestrator" || target?.type !== "agent") return false
+    return !current.edges.some(
+      (edge) => edge.sourceNodeID === connection.source && edge.targetNodeID === connection.target,
+    )
+  }
+
+  const handleNodeClick = async (nodeID: string) => {
+    const sourceNodeID = graph.linkingSourceNodeID
+    if (!sourceNodeID) {
+      void graph.selectNode(nodeID)
+      return
+    }
+
+    graph.clearLink()
+    void graph.selectNode(nodeID)
+    await createEdge(sourceNodeID, nodeID)
+  }
+
+  const deleteEdges = (deleted: OpenNodusFlowEdge[]) => {
+    for (const edge of deleted) {
+      void graph.deleteEdge(edge.id)
+    }
+  }
+
   return (
     <div
       ref={(el) => {
@@ -318,17 +395,24 @@ export function SessionGraph() {
         snapGrid={[12, 12]}
         selectNodesOnDrag
         panOnScroll
-        defaultEdgeOptions={{ type: "smoothstep" }}
-        onNodeClick={({ node }) => void graph.selectNode(node.id)}
+        clickConnect
+        defaultEdgeOptions={{ type: "smoothstep", markerEnd: { type: MarkerType.ArrowClosed } }}
+        isValidConnection={isValidConnection}
+        onConnect={(connection) => void connectNodes(connection)}
+        onNodeClick={({ node }) => void handleNodeClick(node.id)}
+        onEdgesDelete={deleteEdges}
         onPaneContextMenu={({ event }) => openMenu(event)}
-        onPaneClick={() => setMenu(undefined)}
+        onPaneClick={() => {
+          setMenu(undefined)
+          graph.clearLink()
+        }}
         onNodeDragStop={({ nodes }) => {
           const node = nodes[0]
           if (node) persistNodePosition(node)
         }}
         onSelectionChange={({ nodes }) => {
           const first = nodes[0]
-          if (first) void graph.selectNode(first.id)
+          if (first && !graph.linkingSourceNodeID) void graph.selectNode(first.id)
         }}
         class="opennodus-session-graph"
       >

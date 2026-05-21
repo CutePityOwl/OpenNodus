@@ -1,4 +1,4 @@
-import type { Graph, GraphNode } from "@opencode-ai/sdk/v2/client"
+import type { Graph, GraphEdge, GraphNode } from "@opencode-ai/sdk/v2/client"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createMemo } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
@@ -27,6 +27,11 @@ type NodeCreate = {
   position: GraphNode["position"]
 }
 
+type EdgeCreate = {
+  sourceNodeID: string
+  targetNodeID: string
+}
+
 export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
   name: "Graph",
   init: () => {
@@ -34,6 +39,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     const [store, setStore] = createStore({
       currentSessionID: undefined as string | undefined,
       settingsNodeID: undefined as string | undefined,
+      linkingSourceNodeID: undefined as string | undefined,
       loading: false,
       error: undefined as unknown,
       bySession: {} as Record<string, Graph | undefined>,
@@ -54,6 +60,14 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     })
 
     const selectedNodeChatSessionID = createMemo(() => selectedNode()?.currentChatSessionID)
+
+    const linkingSourceNode = createMemo<GraphNode | undefined>(() => {
+      const graph = current()
+      if (!graph) return
+      const nodeID = store.linkingSourceNodeID
+      if (!nodeID) return
+      return graph.nodes.find((node) => node.id === nodeID)
+    })
 
     const settingsNode = createMemo<GraphNode | undefined>(() => {
       const graph = current()
@@ -149,6 +163,58 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       return result.data
     }
 
+    const createEdge = async (input: EdgeCreate) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const graph = store.bySession[sessionID]
+      if (!graph) return
+
+      if (input.sourceNodeID === input.targetNodeID) {
+        throw new Error("Select a different target node")
+      }
+
+      const source = graph.nodes.find((node) => node.id === input.sourceNodeID)
+      const target = graph.nodes.find((node) => node.id === input.targetNodeID)
+      if (!source || !target) throw new Error("Graph node not found")
+      if (source.type !== "orchestrator" || target.type !== "agent") {
+        throw new Error("Only Orchestrator to Agent links are supported for now")
+      }
+
+      const existing = graph.edges.find(
+        (edge) => edge.sourceNodeID === input.sourceNodeID && edge.targetNodeID === input.targetNodeID,
+      )
+      if (existing) return existing
+
+      const result = await sdk.client.graph.edge.create({
+        sessionID,
+        sourceNodeID: input.sourceNodeID,
+        targetNodeID: input.targetNodeID,
+      })
+      if (!result.data) return
+
+      const current = store.bySession[sessionID]
+      if (!current) return result.data
+      setGraph(sessionID, {
+        ...current,
+        edges: [...current.edges, result.data as GraphEdge],
+      })
+
+      return result.data
+    }
+
+    const deleteEdge = async (edgeID: string) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const result = await sdk.client.graph.edge.delete({ sessionID, edgeID })
+      if (!result.data) return
+      const graph = store.bySession[sessionID]
+      if (!graph) return
+      setGraph(sessionID, {
+        ...graph,
+        edges: graph.edges.filter((edge) => edge.id !== edgeID),
+      })
+    }
+
     const openSettings = (nodeID?: string) => {
       const node = nodeID ?? selectedNode()?.id
       setStore("settingsNodeID", node)
@@ -158,12 +224,23 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       setStore("settingsNodeID", undefined)
     }
 
+    const startLink = (nodeID: string) => {
+      setStore("linkingSourceNodeID", nodeID)
+    }
+
+    const clearLink = () => {
+      setStore("linkingSourceNodeID", undefined)
+    }
+
     return {
       get currentSessionID() {
         return store.currentSessionID
       },
       get settingsNodeID() {
         return store.settingsNodeID
+      },
+      get linkingSourceNodeID() {
+        return store.linkingSourceNodeID
       },
       get loading() {
         return store.loading
@@ -174,14 +251,19 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       current,
       selectedNode,
       selectedNodeChatSessionID,
+      linkingSourceNode,
       settingsNode,
       open,
       ensure,
       selectNode,
       updateNode,
       createNode,
+      createEdge,
+      deleteEdge,
       openSettings,
       closeSettings,
+      startLink,
+      clearLink,
     }
   },
 })
