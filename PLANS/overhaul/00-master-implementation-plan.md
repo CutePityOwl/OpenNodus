@@ -519,6 +519,15 @@ Creating a node may require backend work:
 - Created nodes persist.
 - Selecting a created node changes chat history.
 
+### Implementation Status
+
+- Added a right-click pane context menu to the session graph.
+- Added "Add Orchestrator" and "Add Agent" actions.
+- Node creation converts the clicked screen position into graph coordinates with Solid Flow.
+- Creating a node first creates a child chat session under the graph session, then attaches that chat session to the graph node.
+- Created nodes are added to graph state, selected immediately, and therefore switch the visible chat history to the new node.
+- Created node position persists through the existing graph node storage.
+
 ## Phase 9: Node Settings Panel
 
 ### Goal

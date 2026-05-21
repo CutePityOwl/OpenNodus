@@ -4,6 +4,8 @@ import { createMemo } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useSDK } from "./sdk"
 
+type NodeType = GraphNode["type"]
+
 type NodePatch = {
   name?: string
   providerID?: string
@@ -18,6 +20,11 @@ type NodePatch = {
   permission?: GraphNode["permission"]
   toolPolicy?: GraphNode["toolPolicy"]
   mcpPolicy?: GraphNode["mcpPolicy"]
+}
+
+type NodeCreate = {
+  type: NodeType
+  position: GraphNode["position"]
 }
 
 export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
@@ -97,6 +104,41 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       return result.data
     }
 
+    const createNode = async (input: NodeCreate) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const graph = store.bySession[sessionID]
+      const typeCount = graph?.nodes.filter((node) => node.type === input.type).length ?? 0
+      const label = input.type === "orchestrator" ? "Orchestrator" : "Agent"
+      const name = `${label} ${typeCount + 1}`
+
+      const chat = await sdk.client.session.create({ parentID: sessionID, title: name })
+      if (!chat.data) return
+
+      const result = await sdk.client.graph.node.create({
+        sessionID,
+        type: input.type,
+        name,
+        currentChatSessionID: chat.data.id,
+        position: input.position,
+        sameChat: true,
+        canSpawnAgents: false,
+      })
+      if (!result.data) return
+
+      const state = await sdk.client.graph.updateState({ sessionID, selectedNodeID: result.data.id })
+      const current = store.bySession[sessionID]
+      if (!current) return result.data
+
+      setGraph(sessionID, {
+        ...current,
+        state: state.data ?? current.state,
+        nodes: [...current.nodes, result.data],
+      })
+
+      return result.data
+    }
+
     return {
       get currentSessionID() {
         return store.currentSessionID
@@ -114,6 +156,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       ensure,
       selectNode,
       updateNode,
+      createNode,
     }
   },
 })

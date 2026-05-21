@@ -7,6 +7,7 @@ import {
   NodeResizer,
   Position,
   SolidFlow,
+  useSolidFlow,
   type Edge,
   type Node,
   type NodeProps,
@@ -14,7 +15,8 @@ import {
   type ResizeParams,
 } from "@dschz/solid-flow"
 import { Icon } from "@opencode-ai/ui/icon"
-import { Show, createEffect } from "solid-js"
+import { showToast } from "@opencode-ai/ui/toast"
+import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useGraph } from "@/context/graph"
 
@@ -26,6 +28,12 @@ type OpenNodusNodeData = {
 
 type OpenNodusFlowNode = Node<OpenNodusNodeData, "opennodus">
 type OpenNodusFlowEdge = Edge<Record<string, unknown>, "smoothstep">
+type GraphMenuState = {
+  clientX: number
+  clientY: number
+  x: number
+  y: number
+}
 
 function numeric(
   value: GraphNode["position"]["x"] | NonNullable<GraphNode["size"]>["width"] | undefined,
@@ -147,10 +155,73 @@ const nodeTypes = {
   opennodus: OpenNodusNode,
 } satisfies NodeTypes
 
+function GraphContextMenu(props: {
+  state: () => GraphMenuState | undefined
+  onClose: () => void
+  onCreate: (type: GraphNode["type"], position: GraphNode["position"]) => Promise<void>
+}) {
+  const flow = useSolidFlow<OpenNodusFlowNode, OpenNodusFlowEdge>()
+  const items = [
+    { type: "orchestrator" as const, label: "Add Orchestrator", icon: "brain" as const },
+    { type: "agent" as const, label: "Add Agent", icon: "bubble-5" as const },
+  ]
+
+  const create = async (type: GraphNode["type"]) => {
+    const state = props.state()
+    if (!state) return
+    props.onClose()
+    const position = flow.screenToFlowPosition({ x: state.clientX, y: state.clientY }, { snapToGrid: true })
+    await props.onCreate(type, {
+      x: Math.round(position.x),
+      y: Math.round(position.y),
+    })
+  }
+
+  onMount(() => {
+    const close = () => props.onClose()
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") props.onClose()
+    }
+    window.addEventListener("pointerdown", close)
+    window.addEventListener("keydown", closeOnEscape)
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", close)
+      window.removeEventListener("keydown", closeOnEscape)
+    })
+  })
+
+  return (
+    <Show when={props.state()} keyed>
+      {(state) => (
+        <div
+          class="absolute z-20 min-w-44 rounded-md border border-border-base bg-surface-raised-base p-1 shadow-lg"
+          style={{ left: `${state.x}px`, top: `${state.y}px` }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <For each={items}>
+            {(item) => (
+              <button
+                type="button"
+                class="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm text-text-base hover:bg-surface-base-hover"
+                onClick={() => void create(item.type)}
+              >
+                <Icon name={item.icon} size="small" class="text-icon-base" />
+                <span>{item.label}</span>
+              </button>
+            )}
+          </For>
+        </div>
+      )}
+    </Show>
+  )
+}
+
 export function SessionGraph() {
   const graph = useGraph()
   const [nodes, setNodes] = createStore<OpenNodusFlowNode[]>([])
   const [edges, setEdges] = createStore<OpenNodusFlowEdge[]>([])
+  const [menu, setMenu] = createSignal<GraphMenuState | undefined>()
+  let root: HTMLDivElement | undefined
 
   const persistNodeSize = (nodeID: string, size: { width: number; height: number }) => {
     void graph.updateNode(nodeID, { size })
@@ -189,8 +260,33 @@ export function SessionGraph() {
     })
   }
 
+  const openMenu = (event: PointerEvent) => {
+    event.preventDefault()
+    const rect = root?.getBoundingClientRect()
+    setMenu({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      x: event.clientX - (rect?.left ?? 0),
+      y: event.clientY - (rect?.top ?? 0),
+    })
+  }
+
+  const createNode = async (type: GraphNode["type"], position: GraphNode["position"]) => {
+    try {
+      await graph.createNode({ type, position })
+    } catch (error) {
+      console.debug("[session-graph] failed to create node", error)
+      showToast({ title: "Failed to create graph node" })
+    }
+  }
+
   return (
-    <div class="relative h-full min-h-[220px] overflow-hidden border-b border-border-base bg-background-base">
+    <div
+      ref={(el) => {
+        root = el
+      }}
+      class="relative h-full min-h-[220px] overflow-hidden border-b border-border-base bg-background-base"
+    >
       <SolidFlow<OpenNodusFlowNode, OpenNodusFlowEdge>
         nodes={nodes}
         edges={edges}
@@ -203,6 +299,8 @@ export function SessionGraph() {
         panOnScroll
         defaultEdgeOptions={{ type: "smoothstep" }}
         onNodeClick={({ node }) => void graph.selectNode(node.id)}
+        onPaneContextMenu={({ event }) => openMenu(event)}
+        onPaneClick={() => setMenu(undefined)}
         onNodeDragStop={({ nodes }) => {
           const node = nodes[0]
           if (node) persistNodePosition(node)
@@ -216,6 +314,7 @@ export function SessionGraph() {
         <Background variant="dots" gap={18} size={1} />
         <Controls position="bottom-left" />
         <MiniMap pannable zoomable width={128} height={88} />
+        <GraphContextMenu state={menu} onClose={() => setMenu(undefined)} onCreate={createNode} />
       </SolidFlow>
     </div>
   )
