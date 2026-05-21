@@ -21,12 +21,18 @@ const promoted: Array<{ directory: string; sessionID: string }> = []
 const sentShell: string[] = []
 const sentPrompts: string[] = []
 const syncedDirectories: string[] = []
+const createdNodeChats: string[] = []
+const updatedNodeChats: Array<{ nodeID: string; sessionID: string }> = []
 
 let params: { id?: string } = {}
 let selected = "/repo/worktree-a"
 let variant: string | undefined
 let selectedGraphNode:
   | {
+      id?: string
+      name?: string
+      sameChat?: boolean
+      currentChatSessionID?: string
       providerID?: string
       modelID?: string
       model?: { variant?: string }
@@ -109,6 +115,15 @@ beforeAll(async () => {
   mock.module("@/context/graph", () => ({
     useGraph: () => ({
       selectedNode: () => selectedGraphNode,
+      createChatForNode: async (nodeID: string) => {
+        createdNodeChats.push(nodeID)
+        const session = {
+          id: `node-chat-${createdNodeChats.length}`,
+          title: `Node chat ${createdNodeChats.length}`,
+        }
+        updatedNodeChats.push({ nodeID, sessionID: session.id })
+        return session
+      },
     }),
   }))
 
@@ -229,6 +244,8 @@ beforeEach(() => {
   sentShell.length = 0
   sentPrompts.length = 0
   syncedDirectories.length = 0
+  createdNodeChats.length = 0
+  updatedNodeChats.length = 0
   selected = "/repo/worktree-a"
   variant = undefined
   selectedGraphNode = undefined
@@ -399,6 +416,45 @@ describe("prompt submit worktree selection", () => {
 
     expect(optimistic[0]?.sessionID).toBe("node-chat-session")
     expect(sentPrompts).toEqual(["node-chat-session"])
+  })
+
+  test("creates a fresh chat for same-chat disabled graph nodes", async () => {
+    params = { id: "graph-session" }
+    selectedGraphNode = {
+      id: "gnode-agent",
+      name: "Agent",
+      sameChat: false,
+      currentChatSessionID: "old-node-chat-session",
+    }
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "old-node-chat-session" }),
+      sessionID: () => "old-node-chat-session",
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      shouldQueue: () => true,
+      onSubmit: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+
+    await submit.handleSubmit(event)
+    await Promise.resolve()
+
+    expect(createdNodeChats).toEqual(["gnode-agent"])
+    expect(updatedNodeChats).toEqual([{ nodeID: "gnode-agent", sessionID: "node-chat-1" }])
+    expect(optimistic[0]?.sessionID).toBe("node-chat-1")
+    expect(sentPrompts).toEqual(["node-chat-1"])
   })
 
   test("seeds new sessions before optimistic prompts are added", async () => {

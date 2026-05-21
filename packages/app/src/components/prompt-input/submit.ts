@@ -373,6 +373,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
     }
 
     let session = input.info()
+    let freshNodeChat = false
     if (!session && isNewSession) {
       const created = await client.session
         .create()
@@ -393,6 +394,21 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         navigate(`/${base64Encode(sessionDirectory)}/session/${session.id}`)
       }
     }
+
+    if (session && selectedNode && selectedNode.sameChat === false && !isNewSession) {
+      const created = await graph.createChatForNode(selectedNode.id).catch((err) => {
+        showToast({
+          title: language.t("prompt.toast.sessionCreateFailed.title"),
+          description: errorMessage(err),
+        })
+        return undefined
+      })
+      if (!created) return
+      seed(sessionDirectory, created)
+      session = created
+      freshNodeChat = true
+    }
+
     if (!session) {
       showToast({
         title: language.t("prompt.toast.promptSendFailed.title"),
@@ -436,7 +452,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       })
     }
 
-    if (!isNewSession && mode === "normal" && input.shouldQueue?.()) {
+    if (!freshNodeChat && !isNewSession && mode === "normal" && input.shouldQueue?.()) {
       input.onQueue?.(draft)
       clearContext()
       clearInput()

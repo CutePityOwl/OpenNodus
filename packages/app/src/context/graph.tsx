@@ -167,6 +167,20 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       return result.data
     }
 
+    const createChatForNode = async (nodeID: string) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const graph = store.bySession[sessionID]
+      const node = graph?.nodes.find((item) => item.id === nodeID)
+      if (!node) return
+
+      const chat = await sdk.client.session.create({ parentID: sessionID, title: node.name })
+      if (!chat.data) return
+
+      await updateNode(nodeID, { currentChatSessionID: chat.data.id })
+      return chat.data
+    }
+
     const createEdge = async (input: EdgeCreate) => {
       const sessionID = store.currentSessionID
       if (!sessionID) return
@@ -263,6 +277,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       selectNode,
       updateNode,
       createNode,
+      createChatForNode,
       createEdge,
       deleteEdge,
       openSettings,

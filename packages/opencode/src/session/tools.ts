@@ -220,13 +220,11 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                   permission: target.permission,
                 })
                 targetSessionID = created.id
-                if (target.sameChat) {
-                  yield* graph.updateNode({
-                    graphSessionID: current.node.graphSessionID,
-                    nodeID: target.id,
-                    patch: { currentChatSessionID: targetSessionID },
-                  })
-                }
+                yield* graph.updateNode({
+                  graphSessionID: current.node.graphSessionID,
+                  nodeID: target.id,
+                  patch: { currentChatSessionID: targetSessionID },
+                })
               }
 
               const targetSession = yield* sessions.get(targetSessionID).pipe(Effect.orDie)

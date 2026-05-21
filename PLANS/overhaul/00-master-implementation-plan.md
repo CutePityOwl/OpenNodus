@@ -763,6 +763,15 @@ This affects reproducibility and context size. Same-chat histories still need co
 - Same-chat disabled agent starts fresh each call.
 - Multiple orchestrators calling the same same-chat agent reuse that agent's chat.
 
+### Implementation Status
+
+- `Same chat` enabled keeps using the node's existing `currentChatSessionID`; the runtime creates and attaches one if it is missing.
+- `Same chat` disabled now creates a fresh child chat session for every Orchestrator-to-Agent runtime call.
+- `Same chat` disabled also creates a fresh node chat for direct/manual sends from the composer instead of reusing the currently visible node chat.
+- `currentChatSessionID` is kept as the latest visible chat for the node, even when `Same chat` is disabled, so users can inspect the most recent run while the next call still starts from a new context.
+- Direct same-chat-disabled sends bypass the normal follow-up queue because they use a newly created chat session.
+- Added a prompt-submit test covering fresh chat creation for direct sends to same-chat-disabled graph nodes.
+
 ## Phase 14: Sequential And Parallel Agent Calls
 
 ### Goal
