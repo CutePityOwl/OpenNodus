@@ -1,4 +1,5 @@
 import type { Project, UserMessage } from "@opencode-ai/sdk/v2"
+import type { Session } from "@opencode-ai/sdk/v2/client"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { createQuery, skipToken, useMutation, useQueryClient } from "@tanstack/solid-query"
 import {
@@ -28,8 +29,9 @@ import { createAutoScroll } from "@opencode-ai/ui/hooks"
 import { previewSelectedLines } from "@opencode-ai/ui/pierre/selection-bridge"
 import { Button } from "@opencode-ai/ui/button"
 import { showToast } from "@opencode-ai/ui/toast"
-import { checksum } from "@opencode-ai/core/util/encode"
-import { useLocation, useSearchParams } from "@solidjs/router"
+import { Binary } from "@opencode-ai/core/util/binary"
+import { base64Encode, checksum } from "@opencode-ai/core/util/encode"
+import { useLocation, useNavigate, useSearchParams } from "@solidjs/router"
 import { NewSessionView, SessionHeader } from "@/components/session"
 import { useComments } from "@/context/comments"
 import { getSessionPrefetch, SESSION_PREFETCH_TTL } from "@/context/global-sync/session-prefetch"
@@ -44,7 +46,7 @@ import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
-import { NodeSettingsPanel, SessionGraph } from "@/pages/session/graph"
+import { SessionGraph } from "@/pages/session/graph"
 import {
   createOpenReviewFile,
   createSessionTabs,
@@ -197,12 +199,12 @@ export default function Page() {
   const terminal = useTerminal()
   const [searchParams, setSearchParams] = useSearchParams<{ prompt?: string }>()
   const location = useLocation()
+  const navigate = useNavigate()
   const { params, sessionKey, tabs, view } = useSessionLayout()
 
   createEffect(() => {
     if (!prompt.ready()) return
     untrack(() => {
-      if (params.id) return
       const text = searchParams.prompt
       if (!text) return
       prompt.set([{ type: "text", content: text, start: 0, end: text.length }], text.length)
@@ -222,6 +224,46 @@ export default function Page() {
   })
 
   const composer = createSessionComposerState()
+  let creatingEmptySession = false
+
+  const seedSession = (dir: string, info: Session) => {
+    const [, setStore] = globalSync.child(dir)
+    setStore("session", (list: Session[]) => {
+      const result = Binary.search(list, info.id, (item) => item.id)
+      const next = [...list]
+      if (result.found) {
+        next[result.index] = info
+        return next
+      }
+      next.splice(result.index, 0, info)
+      return next
+    })
+  }
+
+  createEffect(() => {
+    if (params.id) return
+    if (!params.dir) return
+    if (creatingEmptySession) return
+
+    creatingEmptySession = true
+    void sdk.client.session
+      .create()
+      .then((result) => {
+        const session = result.data
+        if (!session) return
+        seedSession(sdk.directory, session)
+        local.session.promote(sdk.directory, session.id)
+        layout.handoff.setTabs(base64Encode(sdk.directory), session.id)
+        const promptQuery = searchParams.prompt ? `?prompt=${encodeURIComponent(searchParams.prompt)}` : ""
+        navigate(`/${base64Encode(sdk.directory)}/session/${session.id}${promptQuery}`, { replace: true })
+      })
+      .catch((error) => {
+        showToast({ title: "Failed to create session", description: formatServerError(error) })
+      })
+      .finally(() => {
+        creatingEmptySession = false
+      })
+  })
 
   const workspaceKey = createMemo(() => params.dir ?? "")
   const workspaceTabs = createMemo(() => layout.tabs(workspaceKey))
@@ -266,11 +308,17 @@ export default function Page() {
   const size = createSizing()
   const desktopReviewOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const desktopFileTreeOpen = createMemo(() => isDesktop() && layout.fileTree.opened())
-  const desktopSidePanelOpen = createMemo(() => desktopReviewOpen() || desktopFileTreeOpen())
+  const desktopNodeSettingsOpen = createMemo(() => isDesktop() && !!graph.settingsNode())
+  const desktopSidePanelOpen = createMemo(
+    () => desktopReviewOpen() || desktopFileTreeOpen() || desktopNodeSettingsOpen(),
+  )
+  const desktopFixedSidePanelWidth = createMemo(
+    () => (desktopFileTreeOpen() ? layout.fileTree.width() : 0) + (desktopNodeSettingsOpen() ? 320 : 0),
+  )
   const sessionPanelWidth = createMemo(() => {
     if (!desktopSidePanelOpen()) return "100%"
     if (desktopReviewOpen()) return `${layout.session.width()}px`
-    return `calc(100% - ${layout.fileTree.width()}px)`
+    return `calc(100% - ${desktopFixedSidePanelWidth()}px)`
   })
   const centered = createMemo(() => isDesktop() && !desktopReviewOpen())
 
@@ -1735,8 +1783,26 @@ export default function Page() {
               </Match>
               <Match when={params.id}>
                 <div class="flex h-full min-h-0 flex-col">
-                  <div class="min-h-[220px] flex-[0_0_48%]">
+                  <div
+                    class="relative min-h-[180px] shrink-0"
+                    style={{
+                      height: `${layout.session.graphHeight()}px`,
+                    }}
+                  >
                     <SessionGraph />
+                    <div onPointerDown={() => size.start()}>
+                      <ResizeHandle
+                        direction="vertical"
+                        edge="end"
+                        size={layout.session.graphHeight()}
+                        min={180}
+                        max={typeof window === "undefined" ? 720 : Math.max(260, window.innerHeight * 0.72)}
+                        onResize={(height) => {
+                          size.touch()
+                          layout.session.resizeGraph(height)
+                        }}
+                      />
+                    </div>
                   </div>
                   <div class="min-h-0 flex-1 overflow-hidden">
                     <Show when={messagesReady()}>
@@ -1848,8 +1914,6 @@ export default function Page() {
             </div>
           </Show>
         </div>
-
-        <NodeSettingsPanel />
 
         <SessionSidePanel
           canReview={canReview}

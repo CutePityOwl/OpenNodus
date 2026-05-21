@@ -59,7 +59,7 @@ export function NodeSettingsPanel() {
   return (
     <Show when={node()} keyed>
       {(item) => (
-        <aside class="hidden h-full w-[320px] shrink-0 border-l border-border-base bg-background-base md:block">
+        <div class="h-full w-[320px] shrink-0 border-l border-border-base bg-background-base">
           <div class="flex h-full min-h-0 flex-col">
             <div class="flex h-11 shrink-0 items-center gap-2 border-b border-border-base px-3">
               <div class="min-w-0 flex-1">
@@ -170,7 +170,7 @@ export function NodeSettingsPanel() {
               </div>
             </div>
           </div>
-        </aside>
+        </div>
       )}
     </Show>
   )

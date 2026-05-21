@@ -17,6 +17,7 @@ const AVATAR_COLOR_KEYS = ["pink", "mint", "orange", "purple", "cyan", "lime"] a
 const DEFAULT_SIDEBAR_WIDTH = 344
 const DEFAULT_FILE_TREE_WIDTH = 200
 const DEFAULT_SESSION_WIDTH = 600
+const DEFAULT_GRAPH_HEIGHT = 360
 const DEFAULT_TERMINAL_HEIGHT = 280
 export type AvatarColorKey = (typeof AVATAR_COLOR_KEYS)[number]
 
@@ -252,6 +253,7 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
         },
         session: {
           width: DEFAULT_SESSION_WIDTH,
+          graphHeight: DEFAULT_GRAPH_HEIGHT,
         },
         mobileSidebar: {
           opened: false,
@@ -660,12 +662,20 @@ export const { use: useLayout, provider: LayoutProvider } = createSimpleContext(
       },
       session: {
         width: createMemo(() => store.session?.width ?? DEFAULT_SESSION_WIDTH),
+        graphHeight: createMemo(() => store.session?.graphHeight ?? DEFAULT_GRAPH_HEIGHT),
         resize(width: number) {
           if (!store.session) {
-            setStore("session", { width })
+            setStore("session", { width, graphHeight: DEFAULT_GRAPH_HEIGHT })
             return
           }
           setStore("session", "width", width)
+        },
+        resizeGraph(height: number) {
+          if (!store.session) {
+            setStore("session", { width: DEFAULT_SESSION_WIDTH, graphHeight: height })
+            return
+          }
+          setStore("session", "graphHeight", height)
         },
       },
       mobileSidebar: {

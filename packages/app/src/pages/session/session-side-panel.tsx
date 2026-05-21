@@ -25,6 +25,8 @@ import { useSync } from "@/context/sync"
 import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
 import { FileTabContent } from "@/pages/session/file-tabs"
 import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex, type Sizing } from "@/pages/session/helpers"
+import { useGraph } from "@/context/graph"
+import { NodeSettingsPanel } from "@/pages/session/graph"
 import { setSessionHandoff } from "@/pages/session/handoff"
 import { useSessionLayout } from "@/pages/session/session-layout"
 
@@ -55,6 +57,7 @@ export function SessionSidePanel(props: {
   const language = useLanguage()
   const command = useCommand()
   const dialog = useDialog()
+  const graph = useGraph()
   const { sessionKey, tabs, view } = useSessionLayout()
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
@@ -67,12 +70,14 @@ export function SessionSidePanel(props: {
 
   const reviewOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const fileOpen = createMemo(() => isDesktop() && shown() && layout.fileTree.opened())
-  const open = createMemo(() => reviewOpen() || fileOpen())
+  const nodeSettingsOpen = createMemo(() => isDesktop() && !!graph.settingsNode())
+  const open = createMemo(() => reviewOpen() || fileOpen() || nodeSettingsOpen())
   const reviewTab = createMemo(() => isDesktop())
+  const fixedPanelWidth = createMemo(() => (fileOpen() ? layout.fileTree.width() : 0) + (nodeSettingsOpen() ? 320 : 0))
   const panelWidth = createMemo(() => {
     if (!open()) return "0px"
     if (reviewOpen()) return `calc(100% - ${layout.session.width()}px)`
-    return `${layout.fileTree.width()}px`
+    return `${fixedPanelWidth()}px`
   })
   const treeWidth = createMemo(() => (fileOpen() ? `${layout.fileTree.width()}px` : "0px"))
 
@@ -453,6 +458,10 @@ export function SessionSidePanel(props: {
                   </div>
                 </Show>
               </div>
+            </Show>
+
+            <Show when={nodeSettingsOpen()}>
+              <NodeSettingsPanel />
             </Show>
           </div>
         </Show>

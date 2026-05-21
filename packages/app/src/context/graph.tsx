@@ -150,13 +150,11 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       })
       if (!result.data) return
 
-      const state = await sdk.client.graph.updateState({ sessionID, selectedNodeID: result.data.id })
       const current = store.bySession[sessionID]
       if (!current) return result.data
 
       setGraph(sessionID, {
         ...current,
-        state: state.data ?? current.state,
         nodes: [...current.nodes, result.data],
       })
 
