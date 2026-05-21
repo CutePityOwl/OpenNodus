@@ -1,5 +1,6 @@
 import { For, Show } from "solid-js"
 import type { PermissionRequest } from "@opencode-ai/sdk/v2"
+import type { GraphNode } from "@opencode-ai/sdk/v2/client"
 import { Button } from "@opencode-ai/ui/button"
 import { DockPrompt } from "@opencode-ai/ui/dock-prompt"
 import { Icon } from "@opencode-ai/ui/icon"
@@ -7,6 +8,7 @@ import { useLanguage } from "@/context/language"
 
 export function SessionPermissionDock(props: {
   request: PermissionRequest
+  node?: GraphNode
   responding: boolean
   onDecide: (response: "once" | "always" | "reject") => void
 }) {
@@ -17,6 +19,12 @@ export function SessionPermissionDock(props: {
     const value = language.t(key as Parameters<typeof language.t>[0])
     if (value === key) return ""
     return value
+  }
+
+  const modelLabel = () => {
+    const node = props.node
+    if (!node?.providerID || !node.modelID) return "session default"
+    return `${node.providerID}/${node.modelID}`
   }
 
   return (
@@ -57,6 +65,17 @@ export function SessionPermissionDock(props: {
           <span data-slot="permission-spacer" aria-hidden="true" />
           <div data-slot="permission-hint">{toolDescription()}</div>
         </div>
+      </Show>
+
+      <Show when={props.node}>
+        {(node) => (
+          <div data-slot="permission-row">
+            <span data-slot="permission-spacer" aria-hidden="true" />
+            <div data-slot="permission-hint">
+              {node().name} - {node().type} - {modelLabel()}
+            </div>
+          </div>
+        )}
       </Show>
 
       <Show when={props.request.patterns.length > 0}>

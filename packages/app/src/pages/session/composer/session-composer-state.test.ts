@@ -1,7 +1,28 @@
-import { describe, expect, test } from "bun:test"
+import { beforeAll, describe, expect, mock, test } from "bun:test"
 import type { PermissionRequest, QuestionRequest, Session } from "@opencode-ai/sdk/v2/client"
-import { todoState } from "./session-composer-state"
-import { sessionPermissionRequest, sessionQuestionRequest } from "./session-request-tree"
+
+let todoState: typeof import("./session-composer-state").todoState
+let sessionPermissionRequest: typeof import("./session-request-tree").sessionPermissionRequest
+let sessionQuestionRequest: typeof import("./session-request-tree").sessionQuestionRequest
+
+beforeAll(async () => {
+  mock.module("@solidjs/router", () => ({
+    useNavigate: () => () => undefined,
+    useParams: () => ({}),
+  }))
+  mock.module("@opencode-ai/ui/context", () => ({
+    createSimpleContext: () => ({
+      use: () => undefined,
+      provider: () => undefined,
+    }),
+  }))
+
+  const state = await import("./session-composer-state")
+  const tree = await import("./session-request-tree")
+  todoState = state.todoState
+  sessionPermissionRequest = tree.sessionPermissionRequest
+  sessionQuestionRequest = tree.sessionQuestionRequest
+})
 
 const session = (input: { id: string; parentID?: string }) =>
   ({

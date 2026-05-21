@@ -165,6 +165,7 @@ export function SessionComposerRegion(props: {
             <div>
               <SessionPermissionDock
                 request={request}
+                node={props.state.permissionNode()}
                 responding={props.state.permissionResponding()}
                 onDecide={(response) => {
                   props.onResponseSubmit()

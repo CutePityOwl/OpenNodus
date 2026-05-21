@@ -4,6 +4,7 @@ import type { PermissionRequest, QuestionRequest, Todo } from "@opencode-ai/sdk/
 import { useParams } from "@solidjs/router"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useGlobalSync } from "@/context/global-sync"
+import { useGraph } from "@/context/graph"
 import { useLanguage } from "@/context/language"
 import { usePermission } from "@/context/permission"
 import { useSDK } from "@/context/sdk"
@@ -30,6 +31,7 @@ export function createSessionComposerState(options?: { closeMs?: number | (() =>
   const globalSync = useGlobalSync()
   const language = useLanguage()
   const permission = usePermission()
+  const graph = useGraph()
 
   const questionRequest = createMemo((): QuestionRequest | undefined => {
     return sessionQuestionRequest(sync.data.session, sync.data.question, params.id)
@@ -71,6 +73,8 @@ export function createSessionComposerState(options?: { closeMs?: number | (() =>
     if (!perm) return false
     return store.responding === perm.id
   })
+
+  const permissionNode = createMemo(() => graph.nodeByChatSessionID(permissionRequest()?.sessionID))
 
   const decide = (response: "once" | "always" | "reject") => {
     const perm = permissionRequest()
@@ -179,6 +183,7 @@ export function createSessionComposerState(options?: { closeMs?: number | (() =>
     blocked,
     questionRequest,
     permissionRequest,
+    permissionNode,
     permissionResponding,
     decide,
     todos,

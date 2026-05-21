@@ -15,23 +15,23 @@ const permission = (sessionID: string) =>
   }) as Pick<PermissionRequest, "sessionID">
 
 describe("autoRespondsPermission", () => {
-  test("uses a parent session's directory-scoped auto-accept", () => {
+  test("does not use a parent session's directory-scoped auto-accept", () => {
     const directory = "/tmp/project"
     const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
     const autoAccept = {
       [`${base64Encode(directory)}/root`]: true,
     }
 
-    expect(autoRespondsPermission(autoAccept, sessions, permission("child"), directory)).toBe(true)
+    expect(autoRespondsPermission(autoAccept, sessions, permission("child"), directory)).toBe(false)
   })
 
-  test("uses a parent session's legacy auto-accept key", () => {
+  test("does not use a parent session's legacy auto-accept key", () => {
     const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
 
-    expect(autoRespondsPermission({ root: true }, sessions, permission("child"), "/tmp/project")).toBe(true)
+    expect(autoRespondsPermission({ root: true }, sessions, permission("child"), "/tmp/project")).toBe(false)
   })
 
-  test("defaults to requiring approval when no lineage override exists", () => {
+  test("defaults to requiring approval when no exact-session override exists", () => {
     const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" }), session({ id: "other" })]
     const autoAccept = {
       other: true,
@@ -40,7 +40,7 @@ describe("autoRespondsPermission", () => {
     expect(autoRespondsPermission(autoAccept, sessions, permission("child"), "/tmp/project")).toBe(false)
   })
 
-  test("inherits a parent session's false override", () => {
+  test("ignores a parent session's false override", () => {
     const directory = "/tmp/project"
     const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
     const autoAccept = {
@@ -50,7 +50,7 @@ describe("autoRespondsPermission", () => {
     expect(autoRespondsPermission(autoAccept, sessions, permission("child"), directory)).toBe(false)
   })
 
-  test("prefers a child override over parent override", () => {
+  test("uses a child override directly", () => {
     const directory = "/tmp/project"
     const sessions = [session({ id: "root" }), session({ id: "child", parentID: "root" })]
     const autoAccept = {

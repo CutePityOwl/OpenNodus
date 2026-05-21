@@ -23,11 +23,15 @@ import { showToast } from "@opencode-ai/ui/toast"
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useGraph } from "@/context/graph"
+import { usePermission } from "@/context/permission"
+import { useSDK } from "@/context/sdk"
+import { useSync } from "@/context/sync"
 
 type OpenNodusNodeData = {
   graphNode: GraphNode
   selected: boolean
   linkingSource: boolean
+  permissionPending: boolean
   onOpenSettings: (nodeID: string) => void
   onStartLink: (nodeID: string) => void
   onResizeEnd: (nodeID: string, size: { width: number; height: number }) => void
@@ -60,6 +64,7 @@ function toFlowNode(
   node: GraphNode,
   selectedNodeID: string | undefined,
   linkingSourceNodeID: string | undefined,
+  permissionPending: boolean,
   onOpenSettings: OpenNodusNodeData["onOpenSettings"],
   onStartLink: OpenNodusNodeData["onStartLink"],
   onResizeEnd: OpenNodusNodeData["onResizeEnd"],
@@ -76,6 +81,7 @@ function toFlowNode(
       graphNode: node,
       selected: selectedNodeID === node.id,
       linkingSource: linkingSourceNodeID === node.id,
+      permissionPending,
       onOpenSettings,
       onStartLink,
       onResizeEnd,
@@ -95,6 +101,7 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
   const node = () => props.data.graphNode
   const selected = () => props.data.selected
   const linkingSource = () => props.data.linkingSource
+  const permissionPending = () => props.data.permissionPending
 
   const persistSize = (_event: unknown, params: ResizeParams) => {
     props.data.onResizeEnd(props.id, {
@@ -109,7 +116,8 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
       classList={{
         "border-border-strong shadow-md": selected(),
         "border-icon-info-active shadow-md": linkingSource(),
-        "border-border-base": !selected() && !linkingSource(),
+        "border-icon-warning-base shadow-md": permissionPending(),
+        "border-border-base": !selected() && !linkingSource() && !permissionPending(),
       }}
     >
       <NodeResizer
@@ -141,6 +149,9 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
             <Icon name={node().type === "orchestrator" ? "brain" : "bubble-5"} size="small" />
           </div>
           <div class="min-w-0 flex-1 truncate text-sm font-medium text-text-base">{node().name}</div>
+          <Show when={permissionPending()}>
+            <Icon name="warning" size="small" class="shrink-0 text-icon-warning-base" />
+          </Show>
           <div class="text-[10px] font-medium uppercase tracking-normal text-text-weak">{node().type}</div>
           <IconButton
             icon="link"
@@ -254,6 +265,9 @@ function GraphContextMenu(props: {
 
 export function SessionGraph() {
   const graph = useGraph()
+  const permission = usePermission()
+  const sdk = useSDK()
+  const sync = useSync()
   const [nodes, setNodes] = createStore<OpenNodusFlowNode[]>([])
   const [edges, setEdges] = createStore<OpenNodusFlowEdge[]>([])
   const [menu, setMenu] = createSignal<GraphMenuState | undefined>()
@@ -286,6 +300,10 @@ export function SessionGraph() {
         node,
         current.state.selectedNodeID,
         graph.linkingSourceNodeID,
+        !!node.currentChatSessionID &&
+          (sync.data.permission[node.currentChatSessionID] ?? []).some(
+            (item) => !permission.autoResponds(item, sdk.directory),
+          ),
         openNodeSettings,
         startNodeLink,
         persistNodeSize,

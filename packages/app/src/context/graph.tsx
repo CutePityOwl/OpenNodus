@@ -77,6 +77,12 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       return graph.nodes.find((node) => node.id === nodeID)
     })
 
+    const nodeByChatSessionID = (sessionID: string | undefined) => {
+      const graph = current()
+      if (!graph || !sessionID) return
+      return graph.nodes.find((node) => node.currentChatSessionID === sessionID)
+    }
+
     const setGraph = (sessionID: string, graph: Graph) => {
       setStore("bySession", sessionID, reconcile(graph))
     }
@@ -251,6 +257,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       selectedNodeChatSessionID,
       linkingSourceNode,
       settingsNode,
+      nodeByChatSessionID,
       open,
       ensure,
       selectNode,

@@ -666,6 +666,15 @@ Permission auto-accept needs review. Existing auto-accept is keyed by session/di
 - Node waiting state is visible.
 - Existing permission reply flow still works.
 
+### Implementation Status
+
+- Added graph lookup by node chat session so permission prompts can identify the owning node.
+- Permission prompts now show the node name, node type, and node provider/model when the request belongs to a graph node.
+- Graph nodes now show a warning state while their chat session has a pending permission request that is not auto-answered.
+- Runtime "allow always" approvals are now scoped to the request's session instead of being stored as a project-wide approval for all sessions.
+- Auto-accept inheritance from parent sessions was removed so one node's session approval does not automatically approve child or sibling node sessions.
+- Updated permission tests to cover session-scoped "always" behavior and node-safe auto-response behavior.
+
 ## Phase 12: Orchestrator-To-Agent Runtime
 
 ### Goal
