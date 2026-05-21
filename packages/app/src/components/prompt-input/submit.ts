@@ -6,6 +6,7 @@ import { useNavigate, useParams } from "@solidjs/router"
 import { batch, type Accessor } from "solid-js"
 import type { FileSelection } from "@/context/file"
 import { useGlobalSync } from "@/context/global-sync"
+import { useGraph } from "@/context/graph"
 import { useLanguage } from "@/context/language"
 import { useLayout } from "@/context/layout"
 import { useLocal } from "@/context/local"
@@ -207,6 +208,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
   const sdk = useSDK()
   const sync = useSync()
   const globalSync = useGlobalSync()
+  const graph = useGraph()
   const local = useLocal()
   const permission = usePermission()
   const prompt = usePrompt()
@@ -300,10 +302,19 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
+    const selectedNode = graph.selectedNode()
+    const nodeModel =
+      selectedNode?.providerID && selectedNode.modelID
+        ? {
+            providerID: selectedNode.providerID,
+            modelID: selectedNode.modelID,
+            variant: selectedNode.model?.variant,
+          }
+        : undefined
     const currentModel = local.model.current()
     const currentAgent = local.agent.current()
-    const variant = local.model.variant.current()
-    if (!currentModel || !currentAgent) {
+    const variant = nodeModel?.variant ?? local.model.variant.current()
+    if ((!nodeModel && !currentModel) || !currentAgent) {
       showToast({
         title: language.t("prompt.toast.modelAgentRequired.title"),
         description: language.t("prompt.toast.modelAgentRequired.description"),
@@ -390,9 +401,9 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
-    const model = {
-      modelID: currentModel.id,
-      providerID: currentModel.provider.id,
+    const model = nodeModel ?? {
+      modelID: currentModel!.id,
+      providerID: currentModel!.provider.id,
     }
     const agent = currentAgent.name
     const context = prompt.context.items().slice()

@@ -15,6 +15,7 @@ import {
   type ResizeParams,
 } from "@dschz/solid-flow"
 import { Icon } from "@opencode-ai/ui/icon"
+import { IconButton } from "@opencode-ai/ui/icon-button"
 import { showToast } from "@opencode-ai/ui/toast"
 import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
@@ -23,6 +24,7 @@ import { useGraph } from "@/context/graph"
 type OpenNodusNodeData = {
   graphNode: GraphNode
   selected: boolean
+  onOpenSettings: (nodeID: string) => void
   onResizeEnd: (nodeID: string, size: { width: number; height: number }) => void
 }
 
@@ -52,6 +54,7 @@ function nodeSize(node: GraphNode) {
 function toFlowNode(
   node: GraphNode,
   selectedNodeID: string | undefined,
+  onOpenSettings: OpenNodusNodeData["onOpenSettings"],
   onResizeEnd: OpenNodusNodeData["onResizeEnd"],
 ) {
   const size = nodeSize(node)
@@ -65,6 +68,7 @@ function toFlowNode(
     data: {
       graphNode: node,
       selected: selectedNodeID === node.id,
+      onOpenSettings,
       onResizeEnd,
     },
     selected: selectedNodeID === node.id,
@@ -127,6 +131,16 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
           </div>
           <div class="min-w-0 flex-1 truncate text-sm font-medium text-text-base">{node().name}</div>
           <div class="text-[10px] font-medium uppercase tracking-normal text-text-weak">{node().type}</div>
+          <IconButton
+            icon="settings-gear"
+            variant="ghost"
+            class="nodrag -mr-1 size-7 shrink-0"
+            aria-label="Node settings"
+            onClick={(event) => {
+              event.stopPropagation()
+              props.data.onOpenSettings(props.id)
+            }}
+          />
         </div>
 
         <div class="flex min-h-0 flex-1 flex-col gap-2 p-3 text-xs text-text-weak">
@@ -227,6 +241,11 @@ export function SessionGraph() {
     void graph.updateNode(nodeID, { size })
   }
 
+  const openNodeSettings = (nodeID: string) => {
+    void graph.selectNode(nodeID)
+    graph.openSettings(nodeID)
+  }
+
   createEffect(() => {
     const current = graph.current()
     if (!current) {
@@ -235,7 +254,9 @@ export function SessionGraph() {
       return
     }
 
-    const nextNodes = current.nodes.map((node) => toFlowNode(node, current.state.selectedNodeID, persistNodeSize))
+    const nextNodes = current.nodes.map((node) =>
+      toFlowNode(node, current.state.selectedNodeID, openNodeSettings, persistNodeSize),
+    )
     const nextEdges = current.edges.map(
       (edge) =>
         ({

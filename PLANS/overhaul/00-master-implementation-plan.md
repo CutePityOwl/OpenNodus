@@ -571,6 +571,15 @@ Changing `Same chat` affects future calls. Existing chat history should not be d
 - Node title/provider/model update in graph UI.
 - Prompt submit uses node provider/model.
 
+### Implementation Status
+
+- Added a node settings icon to each graph node.
+- Added a right-side Node Settings panel for the selected/settings node.
+- Node name, provider, model, instructions, Same chat, and Can spawn agents can be edited and persisted through graph node storage.
+- Added placeholders for node permissions and MCP/tool policy editing, which are covered by later phases.
+- Prompt submit now prefers the selected node's provider/model/variant when configured, falling back to the existing session selector.
+- Added a prompt submit test covering selected-node model routing.
+
 ## Phase 10: Edges And Linking
 
 ### Goal

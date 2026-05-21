@@ -44,7 +44,7 @@ import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
-import { SessionGraph } from "@/pages/session/graph"
+import { NodeSettingsPanel, SessionGraph } from "@/pages/session/graph"
 import {
   createOpenReviewFile,
   createSessionTabs,
@@ -1848,6 +1848,8 @@ export default function Page() {
             </div>
           </Show>
         </div>
+
+        <NodeSettingsPanel />
 
         <SessionSidePanel
           canReview={canReview}

@@ -25,6 +25,13 @@ const syncedDirectories: string[] = []
 let params: { id?: string } = {}
 let selected = "/repo/worktree-a"
 let variant: string | undefined
+let selectedGraphNode:
+  | {
+      providerID?: string
+      modelID?: string
+      model?: { variant?: string }
+    }
+  | undefined
 
 const promptValue: Prompt = [{ type: "text", content: "ls", start: 0, end: 2 }]
 
@@ -96,6 +103,12 @@ beforeAll(async () => {
           promoted.push({ directory, sessionID })
         },
       },
+    }),
+  }))
+
+  mock.module("@/context/graph", () => ({
+    useGraph: () => ({
+      selectedNode: () => selectedGraphNode,
     }),
   }))
 
@@ -218,6 +231,7 @@ beforeEach(() => {
   syncedDirectories.length = 0
   selected = "/repo/worktree-a"
   variant = undefined
+  selectedGraphNode = undefined
   for (const key of Object.keys(storedSessions)) delete storedSessions[key]
 })
 
@@ -316,6 +330,43 @@ describe("prompt submit worktree selection", () => {
       message: {
         agent: "agent",
         model: { providerID: "provider", modelID: "model", variant: "high" },
+      },
+    })
+  })
+
+  test("uses selected graph node model when configured", async () => {
+    params = { id: "session-1" }
+    selectedGraphNode = {
+      providerID: "node-provider",
+      modelID: "node-model",
+      model: { variant: "node-variant" },
+    }
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+
+    await submit.handleSubmit(event)
+
+    expect(optimistic[0]).toMatchObject({
+      message: {
+        agent: "agent",
+        model: { providerID: "node-provider", modelID: "node-model", variant: "node-variant" },
       },
     })
   })

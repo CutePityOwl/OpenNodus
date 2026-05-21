@@ -8,18 +8,18 @@ type NodeType = GraphNode["type"]
 
 type NodePatch = {
   name?: string
-  providerID?: string
-  modelID?: string
-  model?: GraphNode["model"]
-  instructions?: string
+  providerID?: string | null
+  modelID?: string | null
+  model?: GraphNode["model"] | null
+  instructions?: string | null
   sameChat?: boolean
   canSpawnAgents?: boolean
-  currentChatSessionID?: string
+  currentChatSessionID?: string | null
   position?: GraphNode["position"]
-  size?: GraphNode["size"]
-  permission?: GraphNode["permission"]
-  toolPolicy?: GraphNode["toolPolicy"]
-  mcpPolicy?: GraphNode["mcpPolicy"]
+  size?: GraphNode["size"] | null
+  permission?: GraphNode["permission"] | null
+  toolPolicy?: GraphNode["toolPolicy"] | null
+  mcpPolicy?: GraphNode["mcpPolicy"] | null
 }
 
 type NodeCreate = {
@@ -33,6 +33,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     const sdk = useSDK()
     const [store, setStore] = createStore({
       currentSessionID: undefined as string | undefined,
+      settingsNodeID: undefined as string | undefined,
       loading: false,
       error: undefined as unknown,
       bySession: {} as Record<string, Graph | undefined>,
@@ -53,6 +54,14 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     })
 
     const selectedNodeChatSessionID = createMemo(() => selectedNode()?.currentChatSessionID)
+
+    const settingsNode = createMemo<GraphNode | undefined>(() => {
+      const graph = current()
+      if (!graph) return
+      const nodeID = store.settingsNodeID
+      if (!nodeID) return
+      return graph.nodes.find((node) => node.id === nodeID)
+    })
 
     const setGraph = (sessionID: string, graph: Graph) => {
       setStore("bySession", sessionID, reconcile(graph))
@@ -93,7 +102,8 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     const updateNode = async (nodeID: string, patch: NodePatch) => {
       const sessionID = store.currentSessionID
       if (!sessionID) return
-      const result = await sdk.client.graph.node.update({ sessionID, nodeID, ...patch })
+      const payload = { sessionID, nodeID, ...patch } as Parameters<typeof sdk.client.graph.node.update>[0]
+      const result = await sdk.client.graph.node.update(payload)
       if (!result.data) return
       const graph = store.bySession[sessionID]
       if (!graph) return
@@ -139,9 +149,21 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       return result.data
     }
 
+    const openSettings = (nodeID?: string) => {
+      const node = nodeID ?? selectedNode()?.id
+      setStore("settingsNodeID", node)
+    }
+
+    const closeSettings = () => {
+      setStore("settingsNodeID", undefined)
+    }
+
     return {
       get currentSessionID() {
         return store.currentSessionID
+      },
+      get settingsNodeID() {
+        return store.settingsNodeID
       },
       get loading() {
         return store.loading
@@ -152,11 +174,14 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       current,
       selectedNode,
       selectedNodeChatSessionID,
+      settingsNode,
       open,
       ensure,
       selectNode,
       updateNode,
       createNode,
+      openSettings,
+      closeSettings,
     }
   },
 })
