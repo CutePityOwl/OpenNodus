@@ -95,6 +95,15 @@ This should be low risk if it only changes labels. Avoid renaming backend APIs o
 - Creating a new session behaves exactly as before.
 - No backend session behavior changes.
 
+### Implementation Status
+
+Completed in the first implementation slice:
+
+- Existing "New Session" language was verified in the desktop/app UI.
+- Visible desktop product text was moved from OpenCode to OpenNodus where it is product framing, not provider-specific naming.
+- Desktop deep links were aligned to the `opennodus://` protocol already registered by the Electron shell.
+- Backend session APIs, session IDs, prompt routing, and runtime behavior were intentionally left unchanged.
+
 ## Phase 2: Graph Persistence Foundation
 
 ### Goal
@@ -820,4 +829,3 @@ The runtime is ready when:
 - Do not implement multi-agent orchestration before node permissions are understood.
 - Keep `graphSessionID` and `nodeChatSessionID` explicit in code.
 - Treat internal node sessions as implementation details, not user-facing sessions.
-

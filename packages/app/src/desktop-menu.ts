@@ -72,7 +72,7 @@ export type DesktopMenu = {
 export const DESKTOP_MENU: DesktopMenu[] = [
   {
     id: "app",
-    label: "OpenCode",
+    label: "OpenNodus",
     platforms: ["macos"],
     items: [
       { type: "item", role: "about" },
@@ -199,18 +199,18 @@ export const DESKTOP_MENU: DesktopMenu[] = [
     id: "help",
     label: "Help",
     items: [
-      { type: "item", label: "OpenCode Documentation", href: "https://opencode.ai/docs" },
-      { type: "item", label: "Support Forum", href: "https://discord.com/invite/opencode" },
+      { type: "item", label: "OpenNodus Repository", href: "https://github.com/CutePityOwl/OpenNodus" },
+      { type: "item", label: "OpenNodus Plans", href: "https://github.com/CutePityOwl/OpenNodus/tree/main/PLANS" },
       { type: "separator" },
       {
         type: "item",
         label: "Share Feedback",
-        href: "https://github.com/anomalyco/opencode/issues/new?template=feature_request.yml",
+        href: "https://github.com/CutePityOwl/OpenNodus/issues/new",
       },
       {
         type: "item",
         label: "Report a Bug",
-        href: "https://github.com/anomalyco/opencode/issues/new?template=bug_report.yml",
+        href: "https://github.com/CutePityOwl/OpenNodus/issues/new",
       },
     ],
   },
