@@ -467,6 +467,17 @@ The session page layout changes substantially. The current `MessageTimeline` sho
 - Position/size persists after reload.
 - Chat still works for selected node.
 
+### Implementation Status
+
+- Added `@dschz/solid-flow`, a Solid-compatible xyflow-style graph canvas package.
+- Added a session graph shell above the selected node chat history.
+- The graph renders persisted OpenNodus nodes and edges from graph state.
+- Added Orchestrator/Agent node visuals with source/target handles and resize controls.
+- Node click and flow selection now update the selected graph node.
+- Node drag stop persists position through the graph node update API.
+- Node resize end persists size through the graph node update API.
+- The existing composer and visible chat remain routed through the selected node chat session.
+
 ## Phase 8: Graph Context Menu And Node Creation
 
 ### Goal

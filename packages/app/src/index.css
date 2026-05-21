@@ -1,4 +1,5 @@
 @import "@opencode-ai/ui/styles/tailwind";
+@import "@dschz/solid-flow/styles";
 
 @font-face {
   font-family: "JetBrainsMono Nerd Font Mono";
@@ -138,5 +139,41 @@
     to {
       opacity: 1;
     }
+  }
+
+  .opennodus-session-graph {
+    --xy-edge-stroke: var(--border-strong);
+    --xy-edge-stroke-selected: var(--border-active);
+    --xy-handle-background-color: var(--background-base);
+    --xy-handle-border-color: var(--border-strong);
+    --xy-minimap-background-color: var(--background-base);
+    --xy-minimap-mask-background-color: color-mix(in srgb, var(--background-stronger) 74%, transparent);
+    --xy-controls-button-background-color: var(--background-base);
+    --xy-controls-button-background-color-hover: var(--surface-base-hover);
+    --xy-controls-button-color: var(--text-base);
+    --xy-controls-button-border-color: var(--border-base);
+    background:
+      linear-gradient(var(--background-stronger), var(--background-stronger)) padding-box,
+      var(--background-base);
+  }
+
+  .opennodus-session-graph .solid-flow__attribution {
+    display: none;
+  }
+
+  .opennodus-flow-node-shell {
+    border: 0;
+    background: transparent;
+  }
+
+  .opennodus-node-resize-line {
+    border-color: var(--border-active);
+  }
+
+  .opennodus-node-resize-handle {
+    width: 8px;
+    height: 8px;
+    border-color: var(--border-active);
+    background: var(--background-base);
   }
 }

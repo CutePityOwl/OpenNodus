@@ -44,6 +44,7 @@ import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
+import { SessionGraph } from "@/pages/session/graph"
 import {
   createOpenReviewFile,
   createSessionTabs,
@@ -1733,38 +1734,45 @@ export default function Page() {
                 </div>
               </Match>
               <Match when={params.id}>
-                <Show when={messagesReady()}>
-                  <MessageTimeline
-                    actions={actions}
-                    scroll={ui.scroll}
-                    onResumeScroll={resumeScroll}
-                    setScrollRef={setScrollRef}
-                    onScheduleScrollState={scheduleScrollState}
-                    onAutoScrollHandleScroll={autoScroll.handleScroll}
-                    onMarkScrollGesture={markScrollGesture}
-                    hasScrollGesture={hasScrollGesture}
-                    onUserScroll={markUserScroll}
-                    onHistoryScroll={historyLoader.onScrollerScroll}
-                    onAutoScrollInteraction={autoScroll.handleInteraction}
-                    shouldAnchorBottom={() =>
-                      !location.hash && !store.messageId && !ui.pendingMessage && !autoScroll.userScrolled()
-                    }
-                    centered={centered()}
-                    setContentRef={(el) => {
-                      content = el
-                      autoScroll.contentRef(el)
+                <div class="flex h-full min-h-0 flex-col">
+                  <div class="min-h-[220px] flex-[0_0_48%]">
+                    <SessionGraph />
+                  </div>
+                  <div class="min-h-0 flex-1 overflow-hidden">
+                    <Show when={messagesReady()}>
+                      <MessageTimeline
+                        actions={actions}
+                        scroll={ui.scroll}
+                        onResumeScroll={resumeScroll}
+                        setScrollRef={setScrollRef}
+                        onScheduleScrollState={scheduleScrollState}
+                        onAutoScrollHandleScroll={autoScroll.handleScroll}
+                        onMarkScrollGesture={markScrollGesture}
+                        hasScrollGesture={hasScrollGesture}
+                        onUserScroll={markUserScroll}
+                        onHistoryScroll={historyLoader.onScrollerScroll}
+                        onAutoScrollInteraction={autoScroll.handleInteraction}
+                        shouldAnchorBottom={() =>
+                          !location.hash && !store.messageId && !ui.pendingMessage && !autoScroll.userScrolled()
+                        }
+                        centered={centered()}
+                        setContentRef={(el) => {
+                          content = el
+                          autoScroll.contentRef(el)
 
-                      const root = scroller
-                      if (root) scheduleScrollState(root)
-                    }}
-                    historyShift={historyLoader.shift()}
-                    userMessages={historyLoader.userMessages()}
-                    anchor={anchor}
-                    setRevealMessage={(fn) => {
-                      revealMessage = fn
-                    }}
-                  />
-                </Show>
+                          const root = scroller
+                          if (root) scheduleScrollState(root)
+                        }}
+                        historyShift={historyLoader.shift()}
+                        userMessages={historyLoader.userMessages()}
+                        anchor={anchor}
+                        setRevealMessage={(fn) => {
+                          revealMessage = fn
+                        }}
+                      />
+                    </Show>
+                  </div>
+                </div>
               </Match>
               <Match when={true}>
                 <NewSessionView worktree={newSessionWorktree()} />

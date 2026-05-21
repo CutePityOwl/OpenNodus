@@ -41,11 +41,12 @@
     "vite-plugin-solid": "catalog:"
   },
   "dependencies": {
+    "@dschz/solid-flow": "0.1.4",
     "@kobalte/core": "catalog:",
-    "@sentry/solid": "catalog:",
+    "@opencode-ai/core": "workspace:*",
     "@opencode-ai/sdk": "workspace:*",
     "@opencode-ai/ui": "workspace:*",
-    "@opencode-ai/core": "workspace:*",
+    "@sentry/solid": "catalog:",
     "@shikijs/transformers": "3.9.2",
     "@solid-primitives/active-element": "2.1.3",
     "@solid-primitives/audio": "1.4.2",

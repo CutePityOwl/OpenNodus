@@ -4,6 +4,22 @@ import { createMemo } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useSDK } from "./sdk"
 
+type NodePatch = {
+  name?: string
+  providerID?: string
+  modelID?: string
+  model?: GraphNode["model"]
+  instructions?: string
+  sameChat?: boolean
+  canSpawnAgents?: boolean
+  currentChatSessionID?: string
+  position?: GraphNode["position"]
+  size?: GraphNode["size"]
+  permission?: GraphNode["permission"]
+  toolPolicy?: GraphNode["toolPolicy"]
+  mcpPolicy?: GraphNode["mcpPolicy"]
+}
+
 export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
   name: "Graph",
   init: () => {
@@ -67,6 +83,20 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       setGraph(sessionID, { ...graph, state: result.data })
     }
 
+    const updateNode = async (nodeID: string, patch: NodePatch) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const result = await sdk.client.graph.node.update({ sessionID, nodeID, ...patch })
+      if (!result.data) return
+      const graph = store.bySession[sessionID]
+      if (!graph) return
+      setGraph(sessionID, {
+        ...graph,
+        nodes: graph.nodes.map((node) => (node.id === result.data!.id ? result.data! : node)),
+      })
+      return result.data
+    }
+
     return {
       get currentSessionID() {
         return store.currentSessionID
@@ -83,6 +113,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       open,
       ensure,
       selectNode,
+      updateNode,
     }
   },
 })
