@@ -21,6 +21,7 @@ import { File } from "@/file"
 import { FileWatcher } from "@/file/watcher"
 import { Ripgrep } from "@/file/ripgrep"
 import { Format } from "@/format"
+import { Graph } from "@/graph/graph"
 import { RuntimeFlags } from "@/effect/runtime-flags"
 import { LSP } from "@/lsp/lsp"
 import { MCP } from "@/mcp"
@@ -67,6 +68,7 @@ import { controlHandlers } from "./handlers/control"
 import { experimentalHandlers } from "./handlers/experimental"
 import { fileHandlers } from "./handlers/file"
 import { globalHandlers } from "./handlers/global"
+import { graphHandlers } from "./handlers/graph"
 import { instanceHandlers } from "./handlers/instance"
 import { mcpHandlers } from "./handlers/mcp"
 import { permissionHandlers } from "./handlers/permission"
@@ -124,6 +126,7 @@ const instanceApiRoutes = HttpApiBuilder.layer(InstanceHttpApi).pipe(
     configHandlers,
     experimentalHandlers,
     fileHandlers,
+    graphHandlers,
     instanceHandlers,
     mcpHandlers,
     projectHandlers,
@@ -195,6 +198,7 @@ export function createRoutes(
       File.defaultLayer,
       FileWatcher.defaultLayer,
       Format.defaultLayer,
+      Graph.defaultLayer,
       LSP.defaultLayer,
       Installation.defaultLayer,
       MCP.defaultLayer,

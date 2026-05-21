@@ -189,6 +189,16 @@ This adds mapping complexity, but keeps the existing engine reusable.
 - Existing OpenCode sessions still work.
 - No graph UI required yet.
 
+### Implementation Status
+
+Completed in the second implementation slice:
+
+- Added graph persistence tables for graph state, nodes, and edges.
+- Added `Graph.Service` with graph ensure/get, state update, node CRUD, and edge create/delete behavior.
+- Added typed `/graph/:sessionID` HTTP API routes for the persistence layer.
+- Added a database migration for the new graph tables and indexes.
+- Kept session creation, prompt routing, sidebar behavior, and UI unchanged; those remain later phases.
+
 ## Phase 3: Default Orchestrator Creation
 
 ### Goal
@@ -301,9 +311,7 @@ New pattern:
 
 ```ts
 const visibleChatSessionID = createMemo(() => selectedNode()?.currentChatSessionID)
-const messages = createMemo(() =>
-  visibleChatSessionID() ? (sync.data.message[visibleChatSessionID()!] ?? []) : []
-)
+const messages = createMemo(() => (visibleChatSessionID() ? (sync.data.message[visibleChatSessionID()!] ?? []) : []))
 ```
 
 History loading must also use the selected node chat session ID.
