@@ -5,7 +5,7 @@ import { Context, Effect, Layer } from "effect"
 import { GraphEdgeTable, GraphNodeTable, GraphStateTable } from "./graph.sql"
 import { EdgeID, NodeID } from "./schema"
 import type { Edge, EdgeCreate, Info, Node, NodeCreate, NodePatch, State, StatePatch } from "./schema"
-import type { SessionID } from "@/session/schema"
+import { SessionID } from "@/session/schema"
 
 type Tx = Parameters<typeof Database.use>[0] extends (trx: infer D) => any ? D : never
 
@@ -74,6 +74,10 @@ function nullable<T>(value: T | null | undefined) {
 export interface Interface {
   readonly get: (graphSessionID: SessionID) => Effect.Effect<Info, NotFoundError>
   readonly ensure: (graphSessionID: SessionID) => Effect.Effect<Info>
+  readonly getNode: (graphSessionID: SessionID, nodeID: NodeID) => Effect.Effect<Node, NotFoundError>
+  readonly findNodeByChatSessionID: (
+    chatSessionID: SessionID,
+  ) => Effect.Effect<{ graph: Info; node: Node }, NotFoundError>
   readonly updateState: (input: { graphSessionID: SessionID; patch: StatePatch }) => Effect.Effect<State, NotFoundError>
   readonly createNode: (input: { graphSessionID: SessionID; node: NodeCreate }) => Effect.Effect<Node, NotFoundError>
   readonly updateNode: (input: {
@@ -284,6 +288,21 @@ export const layer = Layer.effect(
       return nodeFromRow(row)
     })
 
+    const findNodeByChatSessionID: Interface["findNodeByChatSessionID"] = Effect.fn("Graph.findNodeByChatSessionID")(
+      function* (chatSessionID) {
+        const row = yield* db((d) =>
+          d.select().from(GraphNodeTable).where(eq(GraphNodeTable.current_chat_session_id, chatSessionID)).get(),
+        )
+        if (!row) {
+          return yield* Effect.fail(
+            new NotFoundError({ message: `Graph node not found for session: ${chatSessionID}` }),
+          )
+        }
+        const graph = yield* get(SessionID.make(row.graph_session_id))
+        return { graph, node: nodeFromRow(row) }
+      },
+    )
+
     const updateNode: Interface["updateNode"] = Effect.fn("Graph.updateNode")(function* (input) {
       yield* getNode(input.graphSessionID, input.nodeID)
       const patch: Partial<typeof GraphNodeTable.$inferInsert> = {
@@ -390,6 +409,8 @@ export const layer = Layer.effect(
     return Service.of({
       get,
       ensure,
+      getNode,
+      findNodeByChatSessionID,
       updateState,
       createNode,
       updateNode,

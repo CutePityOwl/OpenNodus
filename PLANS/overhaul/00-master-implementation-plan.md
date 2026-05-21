@@ -716,6 +716,17 @@ The orchestrator must communicate with the program/runtime, not directly mutate 
 - Agent failure returns to orchestrator.
 - Agent internal history remains node-local.
 
+### Implementation Status
+
+- Added graph service helpers to resolve the graph node that owns a chat session.
+- Added a runtime `graph_agent` tool that is injected only when the active chat session belongs to an Orchestrator node with connected Agent nodes.
+- The `graph_agent` tool validates Orchestrator-to-Agent edges and accepts either a connected Agent node ID or node name.
+- Agent calls run through the target node's chat session, preserving node-local history when `Same chat` is enabled.
+- If an Agent node has no reusable chat session, the runtime creates a child chat session under the graph session and attaches it back to the node when `Same chat` is enabled.
+- Agent provider/model/instructions are applied from node settings when present, with fallback to the calling session model/agent.
+- Agent success returns only the final text result to the Orchestrator; Agent failure returns a structured error block so the Orchestrator can decide whether to retry.
+- Calling an Agent through the graph requires a node-scoped `graph_agent` permission approval.
+
 ## Phase 13: Same Chat Behavior
 
 ### Goal
