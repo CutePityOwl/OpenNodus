@@ -365,6 +365,12 @@ Each must be reviewed and either mapped to `nodeChatSessionID` or intentionally 
 - Switching selected node changes visible history.
 - No graph canvas required yet.
 
+### Implementation Status
+
+- Added explicit `graphSessionID`, `nodeChatSessionID`, and node chat session key handling in the session page.
+- Message list, history loading, hash scroll, revert state, todo/status refresh, session diffs, and followup queues now read from the selected node chat session ID.
+- The current default Orchestrator still points at the graph session itself, so existing behavior remains unchanged until separate per-node chat sessions are introduced.
+
 ## Phase 6: Prompt Submit Through Selected Node
 
 ### Goal

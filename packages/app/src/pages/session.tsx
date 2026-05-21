@@ -294,17 +294,27 @@ export default function Page() {
     if (!view().reviewPanel.opened()) view().reviewPanel.open()
   }
 
-  const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
+  const graphSessionID = createMemo(() => params.id)
+  const nodeChatSessionID = createMemo(() => graph.selectedNodeChatSessionID() ?? graphSessionID())
+  const nodeChatSessionKey = createMemo(() => `${sessionKey()}:${nodeChatSessionID() ?? ""}`)
+  const graphInfo = createMemo(() => {
+    const id = graphSessionID()
+    return id ? sync.session.get(id) : undefined
+  })
+  const info = createMemo(() => {
+    const id = nodeChatSessionID()
+    return id ? sync.session.get(id) : undefined
+  })
   createEffect(
-    on(
-      () => params.id,
-      (id) => {
-        void graph.open(id)
-      },
-    ),
+    on(graphSessionID, (id) => {
+      void graph.open(id)
+    }),
   )
-  const isChildSession = createMemo(() => !!info()?.parentID)
-  const diffs = createMemo(() => (params.id ? list(sync.data.session_diff[params.id]) : []))
+  const isChildSession = createMemo(() => !!graphInfo()?.parentID)
+  const diffs = createMemo(() => {
+    const id = nodeChatSessionID()
+    return id ? list(sync.data.session_diff[id]) : []
+  })
   const canReview = createMemo(() => !!sync.project)
   const reviewTab = createMemo(() => isDesktop())
   const tabState = createSessionTabs({
@@ -317,19 +327,22 @@ export default function Page() {
   const activeTab = tabState.activeTab
   const activeFileTab = tabState.activeFileTab
   const revertMessageID = createMemo(() => info()?.revert?.messageID)
-  const messages = createMemo(() => (params.id ? (sync.data.message[params.id] ?? []) : []))
+  const messages = createMemo(() => {
+    const id = nodeChatSessionID()
+    return id ? (sync.data.message[id] ?? []) : []
+  })
   const messagesReady = createMemo(() => {
-    const id = params.id
+    const id = nodeChatSessionID()
     if (!id) return true
     return sync.data.message[id] !== undefined
   })
   const historyMore = createMemo(() => {
-    const id = params.id
+    const id = nodeChatSessionID()
     if (!id) return false
     return sync.session.history.more(id)
   })
   const historyLoading = createMemo(() => {
-    const id = params.id
+    const id = nodeChatSessionID()
     if (!id) return false
     return sync.session.history.loading(id)
   })
@@ -628,7 +641,7 @@ export default function Page() {
   const hasScrollGesture = () => Date.now() - ui.scrollGesture < scrollGestureWindowMs
 
   const [sessionSync] = createResource(
-    () => [sdk.directory, params.id] as const,
+    () => [sdk.directory, nodeChatSessionID()] as const,
     ([directory, id]) => {
       if (refreshFrame !== undefined) cancelAnimationFrame(refreshFrame)
       if (refreshTimer !== undefined) window.clearTimeout(refreshTimer)
@@ -649,7 +662,7 @@ export default function Page() {
         refreshFrame = undefined
         refreshTimer = window.setTimeout(() => {
           refreshTimer = undefined
-          if (params.id !== id) return
+          if (nodeChatSessionID() !== id) return
           untrack(() => {
             if (stale) void sync.session.sync(id, { force: true })
           })
@@ -663,7 +676,7 @@ export default function Page() {
   createEffect(
     on(
       () => {
-        const id = params.id
+        const id = nodeChatSessionID()
         return [
           sdk.directory,
           id,
@@ -684,7 +697,7 @@ export default function Page() {
           todoFrame = undefined
           todoTimer = window.setTimeout(() => {
             todoTimer = undefined
-            if (sdk.directory !== dir || params.id !== id) return
+            if (sdk.directory !== dir || nodeChatSessionID() !== id) return
             untrack(() => {
               void sync.session.todo(id, cached ? { force: true } : undefined)
             })
@@ -862,7 +875,10 @@ export default function Page() {
 
   createEffect(
     on(
-      () => sync.data.session_status[params.id ?? ""]?.type,
+      () => {
+        const id = nodeChatSessionID()
+        return id ? sync.data.session_status[id]?.type : undefined
+      },
       (next, prev) => {
         if (next !== "idle" || prev === undefined || prev === "idle") return
         refreshVcs()
@@ -1129,7 +1145,7 @@ export default function Page() {
   })
 
   createEffect(() => {
-    const id = params.id
+    const id = nodeChatSessionID()
     if (!id) return
 
     if (!wantsReview()) return
@@ -1149,7 +1165,7 @@ export default function Page() {
         diffTimer = undefined
         if (!wants) return
 
-        const id = params.id
+        const id = nodeChatSessionID()
         if (!id) return
         if (!untrack(() => sync.data.session_diff[id] !== undefined)) return
 
@@ -1276,7 +1292,7 @@ export default function Page() {
   )
 
   const historyLoader = createSessionHistoryLoader({
-    sessionID: () => params.id,
+    sessionID: nodeChatSessionID,
     loaded: () => messages().length,
     visibleUserMessages,
     historyMore,
@@ -1292,7 +1308,7 @@ export default function Page() {
     fillFrame = requestAnimationFrame(() => {
       fillFrame = undefined
 
-      if (!params.id || !messagesReady()) return
+      if (!nodeChatSessionID() || !messagesReady()) return
       if (autoScroll.userScrolled() || historyLoading()) return
 
       const el = scroller
@@ -1309,13 +1325,14 @@ export default function Page() {
       () =>
         [
           params.id,
+          nodeChatSessionID(),
           messagesReady(),
           historyMore(),
           historyLoading(),
           autoScroll.userScrolled(),
           visibleUserMessages().length,
         ] as const,
-      ([id, ready, more, loading, scrolled]) => {
+      ([, id, ready, more, loading, scrolled]) => {
         if (!id || !ready || loading || scrolled) return
         if (!more) return
         fill()
@@ -1369,13 +1386,13 @@ export default function Page() {
   const busy = (sessionID: string) => sync.data.session_working(sessionID)
 
   const queuedFollowups = createMemo(() => {
-    const id = params.id
+    const id = nodeChatSessionID()
     if (!id) return emptyFollowups
     return followup.items[id] ?? emptyFollowups
   })
 
   const editingFollowup = createMemo(() => {
-    const id = params.id
+    const id = nodeChatSessionID()
     if (!id) return
     return followup.edit[id]
   })
@@ -1410,14 +1427,14 @@ export default function Page() {
     followupMutation.isPending && followupMutation.variables?.sessionID === sessionID
 
   const sendingFollowup = createMemo(() => {
-    const id = params.id
+    const id = nodeChatSessionID()
     if (!id) return
     if (!followupBusy(id)) return
     return followupMutation.variables?.id
   })
 
   const queueEnabled = createMemo(() => {
-    const id = params.id
+    const id = nodeChatSessionID()
     if (!id) return false
     return settings.general.followup() === "queue" && busy(id) && !composer.blocked() && !isChildSession()
   })
@@ -1460,7 +1477,7 @@ export default function Page() {
   }
 
   const editFollowup = (id: string) => {
-    const sessionID = params.id
+    const sessionID = nodeChatSessionID()
     if (!sessionID) return
     if (followupBusy(sessionID)) return
 
@@ -1477,7 +1494,7 @@ export default function Page() {
   }
 
   const clearFollowupEdit = () => {
-    const id = params.id
+    const id = nodeChatSessionID()
     if (!id) return
     setFollowup("edit", id, undefined)
   }
@@ -1511,7 +1528,7 @@ export default function Page() {
 
   const restoreMutation = useMutation(() => ({
     mutationFn: async (id: string) => {
-      const sessionID = params.id
+      const sessionID = nodeChatSessionID()
       if (!sessionID) return
 
       const next = userMessages().find((item) => item.id > id)
@@ -1559,7 +1576,7 @@ export default function Page() {
   }
 
   const restore = (id: string) => {
-    if (!params.id || reverting()) return
+    if (!nodeChatSessionID() || reverting()) return
     return restoreMutation.mutateAsync(id)
   }
 
@@ -1574,7 +1591,7 @@ export default function Page() {
   const actions = { revert }
 
   createEffect(() => {
-    const sessionID = params.id
+    const sessionID = nodeChatSessionID()
     if (!sessionID) return
 
     const item = queuedFollowups()[0]
@@ -1612,8 +1629,8 @@ export default function Page() {
   )
 
   const { clearMessageHash, scrollToMessage } = useSessionHashScroll({
-    sessionKey,
-    sessionID: () => params.id,
+    sessionKey: nodeChatSessionKey,
+    sessionID: nodeChatSessionID,
     messagesReady,
     visibleUserMessages,
     historyMore,
@@ -1770,7 +1787,7 @@ export default function Page() {
             }}
             onResponseSubmit={resumeScroll}
             followup={
-              params.id && !isChildSession()
+              nodeChatSessionID() && !isChildSession()
                 ? {
                     queue: queueEnabled,
                     items: followupDock(),
@@ -1778,12 +1795,14 @@ export default function Page() {
                     edit: editingFollowup(),
                     onQueue: queueFollowup,
                     onAbort: () => {
-                      const id = params.id
+                      const id = nodeChatSessionID()
                       if (!id) return
                       setFollowup("paused", id, true)
                     },
                     onSend: (id) => {
-                      void sendFollowup(params.id!, id, { manual: true })
+                      const sessionID = nodeChatSessionID()
+                      if (!sessionID) return
+                      void sendFollowup(sessionID, id, { manual: true })
                     },
                     onEdit: editFollowup,
                     onEditLoaded: clearFollowupEdit,
