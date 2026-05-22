@@ -1,6 +1,6 @@
 # OpenNodus
 
-![OpenNodus preview](preview.png)
+<img src="https://raw.githubusercontent.com/CutePityOwl/OpenNodus/main/preview.png" alt="OpenNodus preview" width="100%">
 
 OpenNodus is a desktop-focused fork of OpenCode that turns agent work into a visual node graph.
 
