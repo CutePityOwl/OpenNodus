@@ -133,9 +133,6 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
         lineClass="opennodus-node-resize-line"
         onResizeEnd={persistSize}
       />
-      <Handle type="target" position="left" />
-      <Handle type="source" position="right" />
-
       <div
         class="flex h-full min-h-0 flex-col overflow-hidden rounded-md"
         classList={{
@@ -166,9 +163,11 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
             variant="ghost"
             class="nodrag size-7 shrink-0"
             classList={{ "text-icon-info-active": linkingSource() }}
+            disabled={node().type !== "orchestrator"}
             aria-label="Link from this node"
             onClick={(event) => {
               event.stopPropagation()
+              if (node().type !== "orchestrator") return
               props.data.onStartLink(props.id)
             }}
           />
@@ -202,6 +201,21 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
           </div>
         </div>
       </div>
+
+      <Show when={node().type === "agent"}>
+        <Handle
+          type="target"
+          position="left"
+          class="nodrag nopan opennodus-node-connection-handle opennodus-node-connection-handle-target"
+        />
+      </Show>
+      <Show when={node().type === "orchestrator"}>
+        <Handle
+          type="source"
+          position="right"
+          class="nodrag nopan opennodus-node-connection-handle opennodus-node-connection-handle-source"
+        />
+      </Show>
     </div>
   )
 }

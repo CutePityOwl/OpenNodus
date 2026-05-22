@@ -176,4 +176,21 @@
     border-color: var(--border-active);
     background: var(--background-base);
   }
+
+  .opennodus-node-connection-handle {
+    z-index: 20;
+    width: 12px;
+    height: 12px;
+    border: 2px solid var(--border-strong);
+    background: var(--background-base);
+    box-shadow: var(--shadow-xs);
+  }
+
+  .opennodus-node-connection-handle-source {
+    right: -7px;
+  }
+
+  .opennodus-node-connection-handle-target {
+    left: -7px;
+  }
 }
