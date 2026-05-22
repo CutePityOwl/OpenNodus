@@ -38,12 +38,14 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     const sdk = useSDK()
     const [store, setStore] = createStore({
       currentSessionID: undefined as string | undefined,
+      requestedSessionID: undefined as string | undefined,
       settingsNodeID: undefined as string | undefined,
       linkingSourceNodeID: undefined as string | undefined,
       loading: false,
       error: undefined as unknown,
       bySession: {} as Record<string, Graph | undefined>,
     })
+    let openVersion = 0
 
     const current = createMemo(() => {
       const sessionID = store.currentSessionID
@@ -51,6 +53,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     })
 
     const selectedNode = createMemo<GraphNode | undefined>(() => {
+      if (store.currentSessionID !== store.requestedSessionID) return
       const graph = current()
       if (!graph) return
       const selected = graph.state.selectedNodeID
@@ -70,6 +73,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     })
 
     const settingsNode = createMemo<GraphNode | undefined>(() => {
+      if (store.currentSessionID !== store.requestedSessionID) return
       const graph = current()
       if (!graph) return
       const nodeID = store.settingsNodeID
@@ -87,26 +91,49 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       setStore("bySession", sessionID, reconcile(graph))
     }
 
-    const ensure = async (sessionID: string) => {
-      setStore("currentSessionID", sessionID)
+    const load = async (sessionID: string, version: number, options?: { activate?: boolean }) => {
+      const activate = options?.activate ?? true
+      setStore("requestedSessionID", sessionID)
       setStore("loading", true)
       setStore("error", undefined)
       try {
         const result = await sdk.client.graph.ensure({ sessionID })
         if (result.data) setGraph(sessionID, result.data)
+        if (activate && version === openVersion) {
+          setStore("currentSessionID", sessionID)
+          setStore("settingsNodeID", undefined)
+          setStore("linkingSourceNodeID", undefined)
+        }
         return result.data
       } catch (error) {
-        setStore("error", error)
+        if (version === openVersion) setStore("error", error)
         throw error
       } finally {
-        setStore("loading", false)
+        if (version === openVersion) setStore("loading", false)
       }
     }
 
+    const ensure = async (sessionID: string, options?: { activate?: boolean }) => {
+      return load(sessionID, ++openVersion, options)
+    }
+
     const open = (sessionID: string | undefined) => {
-      setStore("currentSessionID", sessionID)
-      if (!sessionID) return Promise.resolve(undefined)
-      return ensure(sessionID)
+      const version = ++openVersion
+      setStore("requestedSessionID", sessionID)
+      setStore("settingsNodeID", undefined)
+      setStore("linkingSourceNodeID", undefined)
+      setStore("error", undefined)
+      if (!sessionID) {
+        setStore("currentSessionID", undefined)
+        setStore("loading", false)
+        return Promise.resolve(undefined)
+      }
+      if (store.bySession[sessionID]) {
+        setStore("currentSessionID", sessionID)
+        setStore("loading", false)
+        return Promise.resolve(store.bySession[sessionID])
+      }
+      return load(sessionID, version)
     }
 
     const selectNode = async (nodeID: string | undefined) => {
@@ -253,6 +280,9 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     return {
       get currentSessionID() {
         return store.currentSessionID
+      },
+      get requestedSessionID() {
+        return store.requestedSessionID
       },
       get settingsNodeID() {
         return store.settingsNodeID

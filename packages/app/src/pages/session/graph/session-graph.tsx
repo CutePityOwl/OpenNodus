@@ -333,6 +333,7 @@ export function SessionGraph() {
   })
 
   const persistNodePosition = (node: OpenNodusFlowNode) => {
+    if (graph.loading) return
     void graph.updateNode(node.id, {
       position: {
         x: Math.round(node.position.x),
@@ -342,6 +343,7 @@ export function SessionGraph() {
   }
 
   const openMenu = (event: PointerEvent) => {
+    if (graph.loading) return
     event.preventDefault()
     const rect = root?.getBoundingClientRect()
     setMenu({
@@ -353,6 +355,7 @@ export function SessionGraph() {
   }
 
   const createNode = async (type: GraphNode["type"], position: GraphNode["position"]) => {
+    if (graph.loading) return
     try {
       await graph.createNode({ type, position })
     } catch (error) {
@@ -362,6 +365,7 @@ export function SessionGraph() {
   }
 
   const createEdge = async (sourceNodeID: string, targetNodeID: string) => {
+    if (graph.loading) return
     try {
       await graph.createEdge({ sourceNodeID, targetNodeID })
     } catch (error) {
@@ -387,6 +391,7 @@ export function SessionGraph() {
   }
 
   const handleNodeClick = async (nodeID: string) => {
+    if (graph.loading) return
     const sourceNodeID = graph.linkingSourceNodeID
     if (!sourceNodeID) {
       void graph.selectNode(nodeID)
@@ -399,6 +404,7 @@ export function SessionGraph() {
   }
 
   const deleteEdges = (deleted: OpenNodusFlowEdge[]) => {
+    if (graph.loading) return
     for (const edge of deleted) {
       void graph.deleteEdge(edge.id)
     }
@@ -433,14 +439,19 @@ export function SessionGraph() {
           graph.clearLink()
         }}
         onNodeDragStop={({ nodes }) => {
+          if (graph.loading) return
           const node = nodes[0]
           if (node) persistNodePosition(node)
         }}
         onSelectionChange={({ nodes }) => {
+          if (graph.loading) return
           const first = nodes[0]
           if (first && !graph.linkingSourceNodeID) void graph.selectNode(first.id)
         }}
         class="opennodus-session-graph"
+        classList={{
+          "pointer-events-none opacity-70": graph.loading,
+        }}
       >
         <Background variant="dots" gap={18} size={1} />
         <Controls position="bottom-left" />
