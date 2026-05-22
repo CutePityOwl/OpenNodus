@@ -344,7 +344,7 @@ export default function Page() {
   }
 
   const graphSessionID = createMemo(() => params.id)
-  const nodeChatSessionID = createMemo(() => graph.selectedNodeChatSessionID() ?? graphSessionID())
+  const nodeChatSessionID = createMemo(() => graph.activeChatNodeChatSessionID() ?? graphSessionID())
   const nodeChatSessionKey = createMemo(() => `${sessionKey()}:${nodeChatSessionID() ?? ""}`)
   const graphInfo = createMemo(() => {
     const id = graphSessionID()

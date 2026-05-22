@@ -115,6 +115,7 @@ beforeAll(async () => {
   mock.module("@/context/graph", () => ({
     useGraph: () => ({
       selectedNode: () => selectedGraphNode,
+      activeChatNode: () => selectedGraphNode,
       createChatForNode: async (nodeID: string) => {
         createdNodeChats.push(nodeID)
         const session = {

@@ -302,7 +302,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       return
     }
 
-    const selectedNode = graph.selectedNode()
+    const selectedNode = graph.activeChatNode()
     const nodeModel =
       selectedNode?.providerID && selectedNode.modelID
         ? {

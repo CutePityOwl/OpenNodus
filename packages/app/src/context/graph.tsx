@@ -47,6 +47,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       loading: false,
       error: undefined as unknown,
       bySession: {} as Record<string, Graph | undefined>,
+      activeChatNodeIDBySession: {} as Record<string, string | undefined>,
     })
     let openVersion = 0
     const pendingSelection = new Map<string, string | undefined>()
@@ -67,6 +68,19 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     })
 
     const selectedNodeChatSessionID = createMemo(() => selectedNode()?.currentChatSessionID)
+
+    const fallbackChatNode = (graph: Graph) => graph.nodes.find((node) => node.type === "orchestrator") ?? graph.nodes[0]
+
+    const activeChatNode = createMemo<GraphNode | undefined>(() => {
+      if (store.currentSessionID !== store.requestedSessionID) return
+      const sessionID = store.currentSessionID
+      const graph = current()
+      if (!graph || !sessionID) return
+      const active = store.activeChatNodeIDBySession[sessionID]
+      return graph.nodes.find((node) => node.id === active) ?? fallbackChatNode(graph)
+    })
+
+    const activeChatNodeChatSessionID = createMemo(() => activeChatNode()?.currentChatSessionID)
 
     const linkingSourceNode = createMemo<GraphNode | undefined>(() => {
       const graph = current()
@@ -172,6 +186,15 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       } finally {
         if (pendingSelection.get(sessionID) === nodeID) pendingSelection.delete(sessionID)
       }
+    }
+
+    const selectChatNode = (nodeID: string | undefined) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const graph = store.bySession[sessionID]
+      if (!graph) return
+      if (nodeID && !graph.nodes.some((node) => node.id === nodeID)) return
+      setStore("activeChatNodeIDBySession", sessionID, nodeID)
     }
 
     const updateNode = async (nodeID: string, patch: NodePatch) => {
@@ -329,12 +352,15 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       current,
       selectedNode,
       selectedNodeChatSessionID,
+      activeChatNode,
+      activeChatNodeChatSessionID,
       linkingSourceNode,
       settingsNode,
       nodeByChatSessionID,
       open,
       ensure,
       selectNode,
+      selectChatNode,
       updateNode,
       createNode,
       createChatForNode,
