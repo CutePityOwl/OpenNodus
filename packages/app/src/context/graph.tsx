@@ -3,6 +3,7 @@ import { Binary } from "@opencode-ai/core/util/binary"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createMemo } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
+import { setSessionPrefetch } from "./global-sync/session-prefetch"
 import { useGlobalSync } from "./global-sync"
 import { useSDK } from "./sdk"
 
@@ -132,6 +133,12 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
         return next
       })
       setGlobalStore("message", info.id, (messages) => messages ?? [])
+      setSessionPrefetch({
+        directory: sdk.directory,
+        sessionID: info.id,
+        limit: 0,
+        complete: true,
+      })
     }
 
     const load = async (sessionID: string, version: number, options?: { activate?: boolean }) => {
