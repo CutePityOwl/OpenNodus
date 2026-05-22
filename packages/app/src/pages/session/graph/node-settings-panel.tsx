@@ -1,4 +1,6 @@
 import { Button } from "@opencode-ai/ui/button"
+import { Dialog } from "@opencode-ai/ui/dialog"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Switch } from "@opencode-ai/ui/switch"
 import { showToast } from "@opencode-ai/ui/toast"
@@ -9,6 +11,7 @@ import { formatServerError } from "@/utils/server-errors"
 
 export function NodeSettingsPanel() {
   const graph = useGraph()
+  const dialog = useDialog()
   const local = useLocal()
   const node = graph.settingsNode
   const [customPermissionID, setCustomPermissionID] = createSignal("")
@@ -140,6 +143,47 @@ export function NodeSettingsPanel() {
     setCustomPermissionID("")
   }
 
+  const resetChat = async (nodeID: string) => {
+    try {
+      await graph.resetChatForNode(nodeID)
+      showToast({ title: "Node chat reset" })
+    } catch (error) {
+      showToast({ title: "Failed to reset node chat", description: formatServerError(error) })
+    }
+  }
+
+  const confirmResetChat = () => {
+    const item = node()
+    if (!item) return
+    dialog.show(() => (
+      <Dialog title="Reset node chat" fit>
+        <div class="flex flex-col gap-4 pl-6 pr-2.5 pb-3">
+          <div class="flex flex-col gap-1 text-sm text-text-base">
+            <span>This will replace the current chat for {item.name} with a fresh chat.</span>
+            <span class="text-text-weak">
+              The previous node chat will be deleted along with its context and knowledge. This cannot be undone.
+            </span>
+          </div>
+          <div class="flex justify-end gap-2">
+            <Button variant="ghost" size="large" onClick={() => dialog.close()}>
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="large"
+              onClick={() => {
+                dialog.close()
+                void resetChat(item.id)
+              }}
+            >
+              Reset chat
+            </Button>
+          </div>
+        </div>
+      </Dialog>
+    ))
+  }
+
   return (
     <Show when={node()} keyed>
       {(item) => (
@@ -240,6 +284,19 @@ export function NodeSettingsPanel() {
                     Same chat
                   </Switch>
                 </div>
+                <Show when={item.sameChat && item.currentChatSessionID}>
+                  <div class="rounded-md border border-border-base p-3">
+                    <div class="flex items-center justify-between gap-3">
+                      <div class="min-w-0">
+                        <div class="text-sm text-text-base">Current chat: Chat</div>
+                        <div class="truncate text-xs text-text-weak">{item.currentChatSessionID}</div>
+                      </div>
+                      <Button variant="secondary" onClick={confirmResetChat}>
+                        Reset chat
+                      </Button>
+                    </div>
+                  </div>
+                </Show>
 
                 <div class="flex items-center justify-between gap-4 rounded-md border border-border-base p-3">
                   <div class="min-w-0">

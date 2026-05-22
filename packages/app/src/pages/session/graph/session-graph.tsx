@@ -35,6 +35,7 @@ type OpenNodusNodeData = {
   permissionPending: boolean
   working: boolean
   onOpenSettings: (nodeID: string) => void
+  onOpenContextMenu: (event: MouseEvent, nodeID: string) => void
   onStartLink: (nodeID: string) => void
   onResizeEnd: (nodeID: string, size: { width: number; height: number }) => void
 }
@@ -47,6 +48,9 @@ type GraphMenuState = {
   clientY: number
   x: number
   y: number
+}
+type NodeMenuState = GraphMenuState & {
+  nodeID: string
 }
 
 function numeric(
@@ -70,6 +74,7 @@ function toFlowNode(
   permissionPending: boolean,
   working: boolean,
   onOpenSettings: OpenNodusNodeData["onOpenSettings"],
+  onOpenContextMenu: OpenNodusNodeData["onOpenContextMenu"],
   onStartLink: OpenNodusNodeData["onStartLink"],
   onResizeEnd: OpenNodusNodeData["onResizeEnd"],
 ) {
@@ -88,6 +93,7 @@ function toFlowNode(
       permissionPending,
       working,
       onOpenSettings,
+      onOpenContextMenu,
       onStartLink,
       onResizeEnd,
     },
@@ -126,6 +132,7 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
         "border-success-base shadow-md": working() && !selected() && !linkingSource() && !permissionPending(),
         "border-border-base": !selected() && !linkingSource() && !permissionPending() && !working(),
       }}
+      onContextMenu={(event) => props.data.onOpenContextMenu(event, props.id)}
     >
       <NodeResizer
         visible={selected()}
@@ -317,6 +324,72 @@ function GraphContextMenu(props: {
   )
 }
 
+function NodeContextMenu(props: {
+  state: () => NodeMenuState | undefined
+  onClose: () => void
+  onDetach: (nodeID: string) => Promise<void>
+  onClone: (nodeID: string) => Promise<void>
+  onDelete: (nodeID: string) => Promise<void>
+}) {
+  const action = async (fn: (nodeID: string) => Promise<void>) => {
+    const state = props.state()
+    if (!state) return
+    props.onClose()
+    await fn(state.nodeID)
+  }
+
+  onMount(() => {
+    const close = () => props.onClose()
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") props.onClose()
+    }
+    window.addEventListener("pointerdown", close)
+    window.addEventListener("keydown", closeOnEscape)
+    onCleanup(() => {
+      window.removeEventListener("pointerdown", close)
+      window.removeEventListener("keydown", closeOnEscape)
+    })
+  })
+
+  return (
+    <Show when={props.state()} keyed>
+      {(state) => (
+        <div
+          class="absolute z-20 min-w-40 rounded-md border border-border-base bg-surface-raised-base p-1 shadow-lg"
+          style={{ left: `${state.x}px`, top: `${state.y}px` }}
+          onPointerDown={(event) => event.stopPropagation()}
+        >
+          <button
+            type="button"
+            class="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm text-text-base hover:bg-surface-base-hover"
+            onClick={() => void action(props.onDetach)}
+          >
+            <Icon name="link" size="small" class="text-icon-base" />
+            <span>Detach</span>
+          </button>
+          <button
+            type="button"
+            class="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm text-text-base hover:bg-surface-base-hover"
+            onClick={() => void action(props.onClone)}
+          >
+            <Icon name="copy" size="small" class="text-icon-base" />
+            <span>Clone</span>
+          </button>
+          <div class="my-1 h-px bg-border-base" />
+          <button
+            type="button"
+            class="flex h-8 w-full items-center gap-2 rounded-sm px-2 text-left text-sm text-text-danger-base hover:bg-surface-base-hover"
+            onClick={() => void action(props.onDelete)}
+          >
+            <Icon name="trash" size="small" class="text-text-danger-base" />
+            <span>Delete</span>
+          </button>
+        </div>
+      )}
+    </Show>
+  )
+}
+
 export function SessionGraph() {
   const graph = useGraph()
   const permission = usePermission()
@@ -327,6 +400,7 @@ export function SessionGraph() {
   const [edges, setEdges] = createStore<OpenNodusFlowEdge[]>([])
   const [edgeHandles, setEdgeHandles] = createStore<Record<string, EdgeHandlePair | undefined>>({})
   const [menu, setMenu] = createSignal<GraphMenuState | undefined>()
+  const [nodeMenu, setNodeMenu] = createSignal<NodeMenuState | undefined>()
   const [cursor, setCursor] = createSignal<{ x: number; y: number } | undefined>()
   let root: HTMLDivElement | undefined
 
@@ -362,6 +436,7 @@ export function SessionGraph() {
           (sync.data.permission[chatSessionID] ?? []).some((item) => !permission.autoResponds(item, sdk.directory)),
         !!chatSessionID && sync.data.session_working(chatSessionID),
         openNodeSettings,
+        openNodeMenu,
         startNodeLink,
         persistNodeSize,
       )
@@ -398,8 +473,25 @@ export function SessionGraph() {
   const openMenu = (event: PointerEvent) => {
     if (graph.loading) return
     event.preventDefault()
+    setNodeMenu(undefined)
     const rect = root?.getBoundingClientRect()
     setMenu({
+      clientX: event.clientX,
+      clientY: event.clientY,
+      x: event.clientX - (rect?.left ?? 0),
+      y: event.clientY - (rect?.top ?? 0),
+    })
+  }
+
+  function openNodeMenu(event: MouseEvent, nodeID: string) {
+    if (graph.loading) return
+    event.preventDefault()
+    event.stopPropagation()
+    setMenu(undefined)
+    void graph.selectNode(nodeID)
+    const rect = root?.getBoundingClientRect()
+    setNodeMenu({
+      nodeID,
       clientX: event.clientX,
       clientY: event.clientY,
       x: event.clientX - (rect?.left ?? 0),
@@ -414,6 +506,33 @@ export function SessionGraph() {
     } catch (error) {
       console.debug("[session-graph] failed to create node", error)
       showToast({ title: "Failed to create graph node" })
+    }
+  }
+
+  const detachNode = async (nodeID: string) => {
+    try {
+      await graph.detachNode(nodeID)
+    } catch (error) {
+      console.debug("[session-graph] failed to detach node", error)
+      showToast({ title: "Failed to detach graph node" })
+    }
+  }
+
+  const cloneNode = async (nodeID: string) => {
+    try {
+      await graph.cloneNode(nodeID)
+    } catch (error) {
+      console.debug("[session-graph] failed to clone node", error)
+      showToast({ title: "Failed to clone graph node" })
+    }
+  }
+
+  const deleteNode = async (nodeID: string) => {
+    try {
+      await graph.deleteNode(nodeID)
+    } catch (error) {
+      console.debug("[session-graph] failed to delete node", error)
+      showToast({ title: "Failed to delete graph node" })
     }
   }
 
@@ -560,6 +679,7 @@ export function SessionGraph() {
         onPaneContextMenu={({ event }) => openMenu(event)}
         onPaneClick={() => {
           setMenu(undefined)
+          setNodeMenu(undefined)
           graph.clearLink()
         }}
         onNodeDragStop={({ nodes }) => {
@@ -581,6 +701,13 @@ export function SessionGraph() {
         <Controls position="bottom-left" />
         <MiniMap pannable zoomable width={128} height={88} />
         <GraphContextMenu state={menu} onClose={() => setMenu(undefined)} onCreate={createNode} />
+        <NodeContextMenu
+          state={nodeMenu}
+          onClose={() => setNodeMenu(undefined)}
+          onDetach={detachNode}
+          onClone={cloneNode}
+          onDelete={deleteNode}
+        />
       </SolidFlow>
       <Show when={linkingPreview()} keyed>
         {(line) => (

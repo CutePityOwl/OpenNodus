@@ -28,7 +28,17 @@ type NodePatch = {
 type NodeCreate = {
   type: NodeType
   position: GraphNode["position"]
+  name?: string
+  providerID?: string | null
+  modelID?: string | null
+  model?: GraphNode["model"] | null
+  instructions?: string | null
+  sameChat?: boolean
+  canSpawnAgents?: boolean
+  size?: GraphNode["size"] | null
   permission?: GraphNode["permission"]
+  toolPolicy?: GraphNode["toolPolicy"] | null
+  mcpPolicy?: GraphNode["mcpPolicy"] | null
 }
 
 type EdgeCreate = {
@@ -237,7 +247,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       const graph = store.bySession[sessionID]
       const typeCount = graph?.nodes.filter((node) => node.type === input.type).length ?? 0
       const label = input.type === "orchestrator" ? "Orchestrator" : "Agent"
-      const name = `${label} ${typeCount + 1}`
+      const name = input.name ?? `${label} ${typeCount + 1}`
 
       const chat = await sdk.client.session.create({ parentID: sessionID, title: name, permission: input.permission })
       if (!chat.data) return
@@ -247,10 +257,18 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
         sessionID,
         type: input.type,
         name,
+        providerID: input.providerID ?? undefined,
+        modelID: input.modelID ?? undefined,
+        model: input.model ?? undefined,
+        instructions: input.instructions ?? undefined,
         currentChatSessionID: chat.data.id,
         position: input.position,
-        sameChat: true,
-        canSpawnAgents: false,
+        size: input.size ?? undefined,
+        sameChat: input.sameChat ?? true,
+        canSpawnAgents: input.canSpawnAgents ?? false,
+        permission: input.permission,
+        toolPolicy: input.toolPolicy ?? undefined,
+        mcpPolicy: input.mcpPolicy ?? undefined,
       })
       if (!result.data) return
 
@@ -265,6 +283,45 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       return result.data
     }
 
+    const detachNode = async (nodeID: string) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const graph = store.bySession[sessionID]
+      if (!graph) return
+      const related = graph.edges.filter((edge) => edge.sourceNodeID === nodeID || edge.targetNodeID === nodeID)
+      for (const edge of related) {
+        await deleteEdge(edge.id)
+      }
+    }
+
+    const cloneNode = async (nodeID: string) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const graph = store.bySession[sessionID]
+      const node = graph?.nodes.find((item) => item.id === nodeID)
+      if (!node) return
+      const positionX = Number(node.position.x)
+      const positionY = Number(node.position.y)
+      return createNode({
+        type: node.type,
+        name: `${node.name} - clone`,
+        providerID: node.providerID ?? null,
+        modelID: node.modelID ?? null,
+        model: node.model ?? null,
+        instructions: node.instructions ?? null,
+        sameChat: node.sameChat,
+        canSpawnAgents: node.canSpawnAgents,
+        position: {
+          x: Number.isFinite(positionX) ? positionX + 36 : 36,
+          y: Number.isFinite(positionY) ? positionY + 36 : 36,
+        },
+        size: node.size ?? null,
+        permission: node.permission,
+        toolPolicy: node.toolPolicy ?? null,
+        mcpPolicy: node.mcpPolicy ?? null,
+      })
+    }
+
     const createChatForNode = async (nodeID: string) => {
       const sessionID = store.currentSessionID
       if (!sessionID) return
@@ -277,6 +334,28 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       seedNodeChat(chat.data)
 
       await updateNode(nodeID, { currentChatSessionID: chat.data.id })
+      return chat.data
+    }
+
+    const resetChatForNode = async (nodeID: string) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const graph = store.bySession[sessionID]
+      const node = graph?.nodes.find((item) => item.id === nodeID)
+      if (!node) return
+
+      const previousChatSessionID = node.currentChatSessionID
+      const chat = await sdk.client.session.create({ parentID: sessionID, title: node.name, permission: node.permission })
+      if (!chat.data) return
+      seedNodeChat(chat.data)
+      await updateNode(nodeID, { currentChatSessionID: chat.data.id })
+
+      if (previousChatSessionID && previousChatSessionID !== sessionID) {
+        await sdk.client.session.delete({ sessionID: previousChatSessionID }).catch(() => undefined)
+        const [, setGlobalStore] = globalSync.child(sdk.directory)
+        setGlobalStore("session", (list: Session[]) => list.filter((item) => item.id !== previousChatSessionID))
+      }
+
       return chat.data
     }
 
@@ -332,6 +411,40 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       })
     }
 
+    const deleteNode = async (nodeID: string) => {
+      const sessionID = store.currentSessionID
+      if (!sessionID) return
+      const graph = store.bySession[sessionID]
+      const node = graph?.nodes.find((item) => item.id === nodeID)
+      if (!graph || !node) return
+
+      const result = await sdk.client.graph.node.delete({ sessionID, nodeID })
+      if (!result.data) return
+
+      if (node.currentChatSessionID && node.currentChatSessionID !== sessionID) {
+        await sdk.client.session.delete({ sessionID: node.currentChatSessionID }).catch(() => undefined)
+        const [, setGlobalStore] = globalSync.child(sdk.directory)
+        setGlobalStore("session", (list: Session[]) => list.filter((item) => item.id !== node.currentChatSessionID))
+      }
+
+      const nextNodes = graph.nodes.filter((item) => item.id !== nodeID)
+      const nextEdges = graph.edges.filter((edge) => edge.sourceNodeID !== nodeID && edge.targetNodeID !== nodeID)
+      setGraph(sessionID, {
+        ...graph,
+        nodes: nextNodes,
+        edges: nextEdges,
+        state: {
+          ...graph.state,
+          selectedNodeID: graph.state.selectedNodeID === nodeID ? undefined : graph.state.selectedNodeID,
+        },
+      })
+      if (store.settingsNodeID === nodeID) setStore("settingsNodeID", undefined)
+      if (store.linkingSourceNodeID === nodeID) setStore("linkingSourceNodeID", undefined)
+      if (store.activeChatNodeIDBySession[sessionID] === nodeID) {
+        setStore("activeChatNodeIDBySession", sessionID, undefined)
+      }
+    }
+
     const openSettings = (nodeID?: string) => {
       const node = nodeID ?? selectedNode()?.id
       setStore("settingsNodeID", node)
@@ -382,9 +495,13 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       selectChatNode,
       updateNode,
       createNode,
+      cloneNode,
+      detachNode,
       createChatForNode,
+      resetChatForNode,
       createEdge,
       deleteEdge,
+      deleteNode,
       openSettings,
       closeSettings,
       startLink,
