@@ -32,6 +32,7 @@ type OpenNodusNodeData = {
   selected: boolean
   linkingSource: boolean
   permissionPending: boolean
+  working: boolean
   onOpenSettings: (nodeID: string) => void
   onStartLink: (nodeID: string) => void
   onResizeEnd: (nodeID: string, size: { width: number; height: number }) => void
@@ -65,6 +66,7 @@ function toFlowNode(
   selectedNodeID: string | undefined,
   linkingSourceNodeID: string | undefined,
   permissionPending: boolean,
+  working: boolean,
   onOpenSettings: OpenNodusNodeData["onOpenSettings"],
   onStartLink: OpenNodusNodeData["onStartLink"],
   onResizeEnd: OpenNodusNodeData["onResizeEnd"],
@@ -82,6 +84,7 @@ function toFlowNode(
       selected: selectedNodeID === node.id,
       linkingSource: linkingSourceNodeID === node.id,
       permissionPending,
+      working,
       onOpenSettings,
       onStartLink,
       onResizeEnd,
@@ -102,6 +105,7 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
   const selected = () => props.data.selected
   const linkingSource = () => props.data.linkingSource
   const permissionPending = () => props.data.permissionPending
+  const working = () => props.data.working
 
   const persistSize = (_event: unknown, params: ResizeParams) => {
     props.data.onResizeEnd(props.id, {
@@ -117,7 +121,8 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
         "border-border-strong shadow-md": selected(),
         "border-icon-info-active shadow-md": linkingSource(),
         "border-icon-warning-base shadow-md": permissionPending(),
-        "border-border-base": !selected() && !linkingSource() && !permissionPending(),
+        "border-success-base shadow-md": working() && !selected() && !linkingSource() && !permissionPending(),
+        "border-border-base": !selected() && !linkingSource() && !permissionPending() && !working(),
       }}
     >
       <NodeResizer
@@ -151,6 +156,9 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
           <div class="min-w-0 flex-1 truncate text-sm font-medium text-text-base">{node().name}</div>
           <Show when={permissionPending()}>
             <Icon name="warning" size="small" class="shrink-0 text-icon-warning-base" />
+          </Show>
+          <Show when={working()}>
+            <span class="size-2 shrink-0 rounded-full bg-icon-success-base animate-pulse" aria-label="Node running" />
           </Show>
           <div class="text-[10px] font-medium uppercase tracking-normal text-text-weak">{node().type}</div>
           <IconButton
@@ -295,20 +303,20 @@ export function SessionGraph() {
       return
     }
 
-    const nextNodes = current.nodes.map((node) =>
-      toFlowNode(
+    const nextNodes = current.nodes.map((node) => {
+      const chatSessionID = node.currentChatSessionID
+      return toFlowNode(
         node,
         current.state.selectedNodeID,
         graph.linkingSourceNodeID,
-        !!node.currentChatSessionID &&
-          (sync.data.permission[node.currentChatSessionID] ?? []).some(
-            (item) => !permission.autoResponds(item, sdk.directory),
-          ),
+        !!chatSessionID &&
+          (sync.data.permission[chatSessionID] ?? []).some((item) => !permission.autoResponds(item, sdk.directory)),
+        !!chatSessionID && sync.data.session_working(chatSessionID),
         openNodeSettings,
         startNodeLink,
         persistNodeSize,
-      ),
-    )
+      )
+    })
     const nextEdges = current.edges.map(
       (edge) =>
         ({

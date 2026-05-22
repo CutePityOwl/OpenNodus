@@ -136,8 +136,9 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
 
       tools.graph_agent = tool({
         description: [
-          "Call a connected OpenNodus Agent node and return only that agent's final result.",
+          "Call one or more connected OpenNodus Agent nodes and return only the agents' final results.",
           "Use this for work that should be delegated through the graph rather than handled by this Orchestrator directly.",
+          "For multiple independent agents, pass calls with mode=parallel. For dependent work, pass calls with mode=sequential or call this tool again after reading the prior result.",
           "Connected agents:",
           describeConnected,
         ].join("\n"),
@@ -155,18 +156,120 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
             },
             prompt: {
               type: "string",
-              description: "The task prompt to send to the Agent node.",
+              description: "The task prompt to send to the Agent node when making a single call.",
+            },
+            mode: {
+              type: "string",
+              enum: ["parallel", "sequential"],
+              description:
+                "How to execute calls when using the calls array. Defaults to parallel for multiple calls and sequential for a single call.",
+            },
+            calls: {
+              type: "array",
+              description: "Batch of Agent node calls to run sequentially or in parallel.",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  agent_node_id: {
+                    type: "string",
+                    description: "The exact graph node id of the connected Agent to call.",
+                  },
+                  agent_name: {
+                    type: "string",
+                    description: "The connected Agent node name to call when the node id is not known.",
+                  },
+                  prompt: {
+                    type: "string",
+                    description: "The task prompt to send to this Agent node.",
+                  },
+                },
+                required: ["prompt"],
+              },
+              minItems: 1,
             },
           },
-          required: ["prompt"],
         }),
         execute(args, options) {
           return run.promise(
             Effect.gen(function* () {
               const params = args as Record<string, unknown>
               const ctx = context(args, options)
-              const prompt = typeof params.prompt === "string" ? params.prompt.trim() : ""
-              if (!prompt) return yield* Effect.fail(new Error("graph_agent requires a non-empty prompt"))
+
+              type GraphAgentCall = {
+                agent_node_id?: string
+                agent_name?: string
+                prompt: string
+              }
+              type PlannedGraphAgentCall = GraphAgentCall & {
+                index: number
+                target: Graph.Node
+              }
+              type GraphAgentCallResult = {
+                target: Graph.Node
+                sessionID?: string
+                status: "completed" | "error"
+                output: string
+              }
+
+              const normalizeCalls = () => {
+                const calls = Array.isArray(params.calls)
+                  ? params.calls.map((item, index) => {
+                      if (!item || typeof item !== "object") {
+                        throw new Error(`graph_agent calls[${index}] must be an object`)
+                      }
+                      const raw = item as Record<string, unknown>
+                      const prompt = typeof raw.prompt === "string" ? raw.prompt.trim() : ""
+                      if (!prompt) throw new Error(`graph_agent calls[${index}] requires a non-empty prompt`)
+                      return {
+                        agent_node_id: typeof raw.agent_node_id === "string" ? raw.agent_node_id : undefined,
+                        agent_name: typeof raw.agent_name === "string" ? raw.agent_name : undefined,
+                        prompt,
+                      } satisfies GraphAgentCall
+                    })
+                  : []
+
+                if (calls.length > 0) return calls
+
+                const prompt = typeof params.prompt === "string" ? params.prompt.trim() : ""
+                if (!prompt) throw new Error("graph_agent requires a non-empty prompt or calls array")
+                return [
+                  {
+                    agent_node_id: typeof params.agent_node_id === "string" ? params.agent_node_id : undefined,
+                    agent_name: typeof params.agent_name === "string" ? params.agent_name : undefined,
+                    prompt,
+                  },
+                ] satisfies GraphAgentCall[]
+              }
+
+              const selectTarget = (call: GraphAgentCall, targets: Graph.Node[]) => {
+                const matches = targets.filter(
+                  (node) =>
+                    (call.agent_node_id && node.id === call.agent_node_id) ||
+                    (call.agent_name && node.name === call.agent_name),
+                )
+                const target =
+                  matches.length === 1
+                    ? matches[0]
+                    : !call.agent_node_id && !call.agent_name && targets.length === 1
+                      ? targets[0]
+                      : undefined
+
+                if (!target) {
+                  const available = targets.map((node) => `${node.name} (${node.id})`).join(", ") || "none"
+                  throw new Error(`Select exactly one connected Agent node. Available: ${available}`)
+                }
+                return target
+              }
+
+              const formatResult = (result: GraphAgentCallResult) => {
+                const tag = result.status === "completed" ? "agent_result" : "agent_error"
+                return [
+                  `<${tag} node="${result.target.name}" node_id="${result.target.id}">`,
+                  result.output,
+                  `</${tag}>`,
+                ].join("\n")
+              }
 
               const current = yield* graph.findNodeByChatSessionID(ctx.sessionID)
               if (current.node.type !== "orchestrator") {
@@ -179,97 +282,131 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 .map((edge) => fresh.nodes.find((node) => node.id === edge.targetNodeID))
                 .filter((node): node is Graph.Node => !!node && node.type === "agent")
 
-              const nodeID = typeof params.agent_node_id === "string" ? params.agent_node_id : undefined
-              const nodeName = typeof params.agent_name === "string" ? params.agent_name : undefined
-              const matches = targets.filter(
-                (node) => (nodeID && node.id === nodeID) || (nodeName && node.name === nodeName),
-              )
-              const target =
-                matches.length === 1
-                  ? matches[0]
-                  : !nodeID && !nodeName && targets.length === 1
-                    ? targets[0]
-                    : undefined
+              const calls = normalizeCalls()
+              const mode =
+                params.mode === "sequential" || params.mode === "parallel"
+                  ? params.mode
+                  : calls.length > 1
+                    ? "parallel"
+                    : "sequential"
+              const planned = calls.map((call, index) => ({
+                ...call,
+                index,
+                target: selectTarget(call, targets),
+              })) satisfies PlannedGraphAgentCall[]
 
-              if (!target) {
-                const available = targets.map((node) => `${node.name} (${node.id})`).join(", ") || "none"
-                return yield* Effect.fail(new Error(`Select exactly one connected Agent node. Available: ${available}`))
+              if (mode === "parallel") {
+                const targetCounts = new Map<string, number>()
+                for (const call of planned) {
+                  targetCounts.set(call.target.id, (targetCounts.get(call.target.id) ?? 0) + 1)
+                }
+                const duplicate = planned.find((call) => (targetCounts.get(call.target.id) ?? 0) > 1)
+                if (duplicate) {
+                  return yield* Effect.fail(
+                    new Error(
+                      `Parallel graph_agent calls cannot target ${duplicate.target.name} more than once. Use sequential mode for repeated calls to the same node.`,
+                    ),
+                  )
+                }
               }
 
-              yield* ctx.ask({
-                permission: "graph_agent",
-                patterns: [target.id],
-                always: [target.id],
-                metadata: {
-                  orchestrator: current.node.name,
-                  agent: target.name,
-                  agent_node_id: target.id,
-                },
-              })
+              const runCall = (call: PlannedGraphAgentCall) =>
+                Effect.gen(function* () {
+                  const target = call.target
+                  yield* ctx.ask({
+                    permission: "graph_agent",
+                    patterns: [target.id],
+                    always: [target.id],
+                    metadata: {
+                      orchestrator: current.node.name,
+                      agent: target.name,
+                      agent_node_id: target.id,
+                      call_index: call.index,
+                      mode,
+                    },
+                  })
 
-              let targetSessionID = target.sameChat ? target.currentChatSessionID : undefined
-              if (!targetSessionID) {
-                const created = yield* sessions.create({
-                  parentID: current.node.graphSessionID,
-                  title: `${target.name} call`,
-                  agent: input.session.agent ?? input.agent.name,
-                  model:
+                  let targetSessionID = target.sameChat ? target.currentChatSessionID : undefined
+                  if (!targetSessionID) {
+                    const created = yield* sessions.create({
+                      parentID: current.node.graphSessionID,
+                      title: `${target.name} call`,
+                      agent: input.session.agent ?? input.agent.name,
+                      model:
+                        target.providerID && target.modelID
+                          ? { providerID: target.providerID, id: target.modelID, variant: target.model?.variant }
+                          : { providerID: input.model.providerID, id: input.model.id },
+                      permission: target.permission,
+                    })
+                    targetSessionID = created.id
+                    yield* graph.updateNode({
+                      graphSessionID: current.node.graphSessionID,
+                      nodeID: target.id,
+                      patch: { currentChatSessionID: targetSessionID },
+                    })
+                  }
+
+                  const targetSession = yield* sessions.get(targetSessionID).pipe(Effect.orDie)
+                  const model =
                     target.providerID && target.modelID
-                      ? { providerID: target.providerID, id: target.modelID, variant: target.model?.variant }
-                      : { providerID: input.model.providerID, id: input.model.id },
-                  permission: target.permission,
-                })
-                targetSessionID = created.id
-                yield* graph.updateNode({
-                  graphSessionID: current.node.graphSessionID,
-                  nodeID: target.id,
-                  patch: { currentChatSessionID: targetSessionID },
-                })
-              }
+                      ? { providerID: target.providerID, modelID: target.modelID }
+                      : targetSession.model
+                        ? { providerID: targetSession.model.providerID, modelID: targetSession.model.id }
+                        : { providerID: input.model.providerID, modelID: input.model.id }
 
-              const targetSession = yield* sessions.get(targetSessionID).pipe(Effect.orDie)
-              const model =
-                target.providerID && target.modelID
-                  ? { providerID: target.providerID, modelID: target.modelID }
-                  : targetSession.model
-                    ? { providerID: targetSession.model.providerID, modelID: targetSession.model.id }
-                    : { providerID: input.model.providerID, modelID: input.model.id }
+                  const result = yield* input.promptOps.prompt({
+                    messageID: MessageID.ascending(),
+                    sessionID: targetSessionID,
+                    agent: targetSession.agent ?? input.session.agent ?? input.agent.name,
+                    model,
+                    variant: target.model?.variant ?? targetSession.model?.variant,
+                    system: target.instructions,
+                    parts: [{ type: "text", text: call.prompt }],
+                  })
 
-              const result = yield* input.promptOps
-                .prompt({
-                  messageID: MessageID.ascending(),
-                  sessionID: targetSessionID,
-                  agent: targetSession.agent ?? input.session.agent ?? input.agent.name,
-                  model,
-                  variant: target.model?.variant ?? targetSession.model?.variant,
-                  system: target.instructions,
-                  parts: [{ type: "text", text: prompt }],
-                })
-                .pipe(
-                  Effect.map((message) => message.parts.findLast((part) => part.type === "text")?.text ?? ""),
+                  return {
+                    target,
+                    sessionID: targetSessionID,
+                    status: "completed" as const,
+                    output: result.parts.findLast((part) => part.type === "text")?.text ?? "",
+                  }
+                }).pipe(
                   Effect.catchCause((cause) =>
                     Effect.sync(() => {
                       const error = Cause.squash(cause)
-                      return [
-                        `<agent_error node="${target.name}" node_id="${target.id}">`,
-                        error instanceof Error ? error.message : String(error),
-                        "</agent_error>",
-                      ].join("\n")
+                      return {
+                        target: call.target,
+                        status: "error" as const,
+                        output: error instanceof Error ? error.message : String(error),
+                      }
                     }),
                   ),
                 )
 
+              const results = yield* Effect.all(
+                planned.map((call) => runCall(call)),
+                {
+                  concurrency: mode === "parallel" ? "unbounded" : 1,
+                },
+              )
+
               return {
-                title: target.name,
+                title:
+                  results.length === 1
+                    ? results[0].target.name
+                    : `${mode === "parallel" ? "Parallel" : "Sequential"} graph calls`,
                 metadata: {
                   graphSessionID: current.node.graphSessionID,
                   orchestratorNodeID: current.node.id,
-                  agentNodeID: target.id,
-                  agentSessionID: targetSessionID,
+                  mode,
+                  calls: results.map((result, index) => ({
+                    index,
+                    status: result.status,
+                    agentNodeID: result.target.id,
+                    agentSessionID: result.sessionID,
+                  })),
                 },
-                output: [`<agent_result node="${target.name}" node_id="${target.id}">`, result, "</agent_result>"].join(
-                  "\n",
-                ),
+                output: results.map(formatResult).join("\n\n"),
               }
             }),
           )

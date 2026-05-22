@@ -820,6 +820,16 @@ Parallel execution increases complexity:
 - UI shows multiple active nodes.
 - Permission prompts remain node-specific.
 
+### Implementation Status
+
+- `graph_agent` now supports the original single-agent call shape and a `calls` array for batched Orchestrator-to-Agent dispatch.
+- Batched calls accept `mode: "parallel"` for independent work and `mode: "sequential"` for ordered work.
+- Parallel batches reject duplicate target Agent nodes to avoid racing the same node chat and overwriting its active chat pointer.
+- Each call still asks permission against the specific target Agent node, with call metadata including orchestrator, agent, node id, call index, and mode.
+- Each call creates or reuses the Agent node chat according to that node's `Same chat` setting.
+- Batched output is aggregated into per-agent `<agent_result>` or `<agent_error>` blocks, so partial failures are visible to the Orchestrator.
+- Graph nodes now show a small running indicator and active border when their current chat session is busy.
+
 ## Phase 15: Sidebar And Internal Session Cleanup
 
 ### Goal
