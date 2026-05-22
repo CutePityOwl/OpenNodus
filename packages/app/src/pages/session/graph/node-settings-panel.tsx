@@ -13,6 +13,11 @@ export function NodeSettingsPanel() {
   const node = graph.settingsNode
 
   const modelOptions = createMemo(() => local.model.list())
+  const filteredModelOptions = createMemo(() => {
+    const providerID = node()?.providerID
+    if (!providerID) return modelOptions()
+    return modelOptions().filter((model) => model.provider.id === providerID)
+  })
   const providerOptions = createMemo(() => {
     const seen = new Map<string, string>()
     for (const model of modelOptions()) seen.set(model.provider.id, model.provider.name)
@@ -126,7 +131,7 @@ export function NodeSettingsPanel() {
                     onChange={(event) => updateModel(event.currentTarget.value)}
                   >
                     <option value="">Session default</option>
-                    <For each={modelOptions()}>
+                    <For each={filteredModelOptions()}>
                       {(model) => <option value={`${model.provider.id}/${model.id}`}>{model.name}</option>}
                     </For>
                   </select>

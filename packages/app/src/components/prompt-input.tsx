@@ -33,6 +33,7 @@ import { Persist, persisted } from "@/utils/persist"
 import { usePermission } from "@/context/permission"
 import { useLanguage } from "@/context/language"
 import { usePlatform } from "@/context/platform"
+import { useGraph } from "@/context/graph"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { createSessionTabs } from "@/pages/session/helpers"
 import { createTextFragment, getCursorPosition, setCursorPosition, setRangeEdge } from "./prompt-input/editor-dom"
@@ -116,6 +117,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   const permission = usePermission()
   const language = useLanguage()
   const platform = usePlatform()
+  const graph = useGraph()
   const { params, tabs, view } = useSessionLayout()
   const activeSessionID = createMemo(() => props.sessionID?.() ?? params.id)
   let editorRef!: HTMLDivElement
@@ -1061,6 +1063,7 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
   })
 
   const variants = createMemo(() => ["default", ...local.model.variant.list()])
+  const nodeOptions = createMemo(() => graph.current()?.nodes ?? [])
   const accepting = createMemo(() => {
     const id = activeSessionID()
     if (!id) return permission.isAutoAcceptingDirectory(sdk.directory)
@@ -1502,6 +1505,35 @@ export const PromptInput: Component<PromptInputProps> = (props) => {
                         variant="ghost"
                       />
                     </TooltipKeybind>
+                  </div>
+                </Show>
+                <Show when={nodeOptions().length > 0 && store.mode !== "shell"}>
+                  <div data-component="prompt-node-control">
+                    <Tooltip placement="top" gutter={4} value="Choose chat target node">
+                      <Select
+                        size="normal"
+                        options={nodeOptions()}
+                        current={graph.activeChatNode()}
+                        value={(node) => node.id}
+                        label={(node) => node.name}
+                        onSelect={(node) => {
+                          graph.selectChatNode(node?.id)
+                          restoreFocus()
+                        }}
+                        class="max-w-[190px] text-text-base"
+                        valueClass="truncate text-13-regular text-text-base"
+                        triggerStyle={control()}
+                        triggerProps={{ "data-action": "prompt-node" }}
+                        variant="ghost"
+                      >
+                        {(node) => (
+                          <div class="flex min-w-0 items-center gap-1.5">
+                            <Icon name={node?.type === "orchestrator" ? "brain" : "bubble-5"} size="small" />
+                            <span class="truncate">{node?.name}</span>
+                          </div>
+                        )}
+                      </Select>
+                    </Tooltip>
                   </div>
                 </Show>
                 <Show when={!providersLoading()}>
