@@ -1807,6 +1807,8 @@ export default function Page() {
                   <div class="min-h-0 flex-1 overflow-hidden">
                     <Show when={messagesReady()}>
                       <MessageTimeline
+                        sessionID={nodeChatSessionID}
+                        sessionKey={nodeChatSessionKey}
                         actions={actions}
                         scroll={ui.scroll}
                         onResumeScroll={resumeScroll}

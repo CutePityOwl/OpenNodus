@@ -49,6 +49,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       bySession: {} as Record<string, Graph | undefined>,
     })
     let openVersion = 0
+    const pendingSelection = new Map<string, string | undefined>()
 
     const current = createMemo(() => {
       const sessionID = store.currentSessionID
@@ -157,11 +158,20 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     const selectNode = async (nodeID: string | undefined) => {
       const sessionID = store.currentSessionID
       if (!sessionID) return
-      const result = await sdk.client.graph.updateState({ sessionID, selectedNodeID: nodeID })
-      if (!result.data) return
       const graph = store.bySession[sessionID]
       if (!graph) return
-      setGraph(sessionID, { ...graph, state: result.data })
+      if (graph.state.selectedNodeID === nodeID) return
+      if (pendingSelection.has(sessionID) && pendingSelection.get(sessionID) === nodeID) return
+      pendingSelection.set(sessionID, nodeID)
+      try {
+        const result = await sdk.client.graph.updateState({ sessionID, selectedNodeID: nodeID })
+        if (!result.data) return
+        const current = store.bySession[sessionID]
+        if (!current) return
+        setGraph(sessionID, { ...current, state: result.data })
+      } finally {
+        if (pendingSelection.get(sessionID) === nodeID) pendingSelection.delete(sessionID)
+      }
     }
 
     const updateNode = async (nodeID: string, patch: NodePatch) => {

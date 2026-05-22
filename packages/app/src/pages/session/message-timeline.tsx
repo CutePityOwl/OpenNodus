@@ -251,6 +251,8 @@ function TimelineDiffView(props: { diff: SummaryDiff }) {
 }
 
 export function MessageTimeline(props: {
+  sessionID: () => string | undefined
+  sessionKey: () => string
   actions?: UserActions
   scroll: { overflow: boolean; bottom: boolean; jump: boolean }
   onResumeScroll: () => void
@@ -279,11 +281,12 @@ export function MessageTimeline(props: {
   const settings = useSettings()
   const dialog = useDialog()
   const language = useLanguage()
-  const { params, sessionKey } = useSessionKey()
+  const { params } = useSessionKey()
   const platform = usePlatform()
 
   let virtualizer: VirtualizerHandle | undefined
-  const sessionID = createMemo(() => params.id)
+  const sessionID = createMemo(() => props.sessionID())
+  const sessionKey = createMemo(() => props.sessionKey())
   const sessionMessages = createMemo(() => {
     const id = sessionID()
     if (!id) return emptyMessages

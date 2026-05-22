@@ -390,16 +390,22 @@ export function SessionGraph() {
     )
   }
 
+  const selectNode = (nodeID: string) => {
+    const current = graph.current()
+    if (current?.state.selectedNodeID === nodeID) return
+    void graph.selectNode(nodeID)
+  }
+
   const handleNodeClick = async (nodeID: string) => {
     if (graph.loading) return
     const sourceNodeID = graph.linkingSourceNodeID
     if (!sourceNodeID) {
-      void graph.selectNode(nodeID)
+      selectNode(nodeID)
       return
     }
 
     graph.clearLink()
-    void graph.selectNode(nodeID)
+    selectNode(nodeID)
     await createEdge(sourceNodeID, nodeID)
   }
 
@@ -446,7 +452,7 @@ export function SessionGraph() {
         onSelectionChange={({ nodes }) => {
           if (graph.loading) return
           const first = nodes[0]
-          if (first && !graph.linkingSourceNodeID) void graph.selectNode(first.id)
+          if (first && !graph.linkingSourceNodeID) selectNode(first.id)
         }}
         class="opennodus-session-graph"
         classList={{
