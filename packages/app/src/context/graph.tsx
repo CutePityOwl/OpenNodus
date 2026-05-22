@@ -106,7 +106,17 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
     }
 
     const setGraph = (sessionID: string, graph: Graph) => {
+      seedGraphNodeChats(graph)
       setStore("bySession", sessionID, reconcile(graph))
+    }
+
+    const seedGraphNodeChats = (graph: Graph) => {
+      const [, setGlobalStore] = globalSync.child(sdk.directory)
+      for (const node of graph.nodes) {
+        const chatSessionID = node.currentChatSessionID
+        if (!chatSessionID) continue
+        setGlobalStore("message", chatSessionID, (messages) => messages ?? [])
+      }
     }
 
     const seedNodeChat = (info: Session) => {
