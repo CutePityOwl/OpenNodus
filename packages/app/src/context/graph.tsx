@@ -28,6 +28,7 @@ type NodePatch = {
 type NodeCreate = {
   type: NodeType
   position: GraphNode["position"]
+  permission?: GraphNode["permission"]
 }
 
 type EdgeCreate = {
@@ -238,7 +239,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       const label = input.type === "orchestrator" ? "Orchestrator" : "Agent"
       const name = `${label} ${typeCount + 1}`
 
-      const chat = await sdk.client.session.create({ parentID: sessionID, title: name })
+      const chat = await sdk.client.session.create({ parentID: sessionID, title: name, permission: input.permission })
       if (!chat.data) return
       seedNodeChat(chat.data)
 
@@ -271,7 +272,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       const node = graph?.nodes.find((item) => item.id === nodeID)
       if (!node) return
 
-      const chat = await sdk.client.session.create({ parentID: sessionID, title: node.name })
+      const chat = await sdk.client.session.create({ parentID: sessionID, title: node.name, permission: node.permission })
       if (!chat.data) return
       seedNodeChat(chat.data)
 

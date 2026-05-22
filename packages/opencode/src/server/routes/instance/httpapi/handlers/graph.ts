@@ -39,9 +39,13 @@ export const graphHandlers = HttpApiBuilder.group(InstanceHttpApi, "graph", (han
       payload: Graph.NodeCreate
     }) {
       yield* requireSession(ctx.params.sessionID)
-      return yield* SessionError.mapStorageNotFound(
+      const node = yield* SessionError.mapStorageNotFound(
         graph.createNode({ graphSessionID: ctx.params.sessionID, node: ctx.payload }),
       )
+      if (node.currentChatSessionID && node.permission) {
+        yield* session.setPermission({ sessionID: node.currentChatSessionID, permission: node.permission })
+      }
+      return node
     })
 
     const updateNode = Effect.fn("GraphHttpApi.updateNode")(function* (ctx: {
@@ -49,9 +53,13 @@ export const graphHandlers = HttpApiBuilder.group(InstanceHttpApi, "graph", (han
       payload: Graph.NodePatch
     }) {
       yield* requireSession(ctx.params.sessionID)
-      return yield* SessionError.mapStorageNotFound(
+      const node = yield* SessionError.mapStorageNotFound(
         graph.updateNode({ graphSessionID: ctx.params.sessionID, nodeID: ctx.params.nodeID, patch: ctx.payload }),
       )
+      if ("permission" in ctx.payload && node.currentChatSessionID) {
+        yield* session.setPermission({ sessionID: node.currentChatSessionID, permission: node.permission ?? [] })
+      }
+      return node
     })
 
     const deleteNode = Effect.fn("GraphHttpApi.deleteNode")(function* (ctx: {
