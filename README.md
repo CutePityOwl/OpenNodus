@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://raw.githubusercontent.com/CutePityOwl/OpenNodus/main/preview.png" alt="OpenNodus preview" width="100%">
+  <img src="./preview.png" alt="OpenNodus preview" width="100%">
 </p>
 
 # OpenNodus
