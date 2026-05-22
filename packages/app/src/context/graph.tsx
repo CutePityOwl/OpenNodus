@@ -1,7 +1,9 @@
-import type { Graph, GraphEdge, GraphNode } from "@opencode-ai/sdk/v2/client"
+import type { Graph, GraphEdge, GraphNode, Session } from "@opencode-ai/sdk/v2/client"
+import { Binary } from "@opencode-ai/core/util/binary"
 import { createSimpleContext } from "@opencode-ai/ui/context"
 import { createMemo } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
+import { useGlobalSync } from "./global-sync"
 import { useSDK } from "./sdk"
 
 type NodeType = GraphNode["type"]
@@ -36,6 +38,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
   name: "Graph",
   init: () => {
     const sdk = useSDK()
+    const globalSync = useGlobalSync()
     const [store, setStore] = createStore({
       currentSessionID: undefined as string | undefined,
       requestedSessionID: undefined as string | undefined,
@@ -89,6 +92,21 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
 
     const setGraph = (sessionID: string, graph: Graph) => {
       setStore("bySession", sessionID, reconcile(graph))
+    }
+
+    const seedNodeChat = (info: Session) => {
+      const [, setGlobalStore] = globalSync.child(sdk.directory)
+      setGlobalStore("session", (list: Session[]) => {
+        const result = Binary.search(list, info.id, (item) => item.id)
+        const next = [...list]
+        if (result.found) {
+          next[result.index] = info
+          return next
+        }
+        next.splice(result.index, 0, info)
+        return next
+      })
+      setGlobalStore("message", info.id, (messages) => messages ?? [])
     }
 
     const load = async (sessionID: string, version: number, options?: { activate?: boolean }) => {
@@ -171,6 +189,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
 
       const chat = await sdk.client.session.create({ parentID: sessionID, title: name })
       if (!chat.data) return
+      seedNodeChat(chat.data)
 
       const result = await sdk.client.graph.node.create({
         sessionID,
@@ -203,6 +222,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
 
       const chat = await sdk.client.session.create({ parentID: sessionID, title: node.name })
       if (!chat.data) return
+      seedNodeChat(chat.data)
 
       await updateNode(nodeID, { currentChatSessionID: chat.data.id })
       return chat.data
