@@ -388,6 +388,45 @@ describe("prompt submit worktree selection", () => {
     })
   })
 
+  test("does not apply the global variant to a graph node model without its own variant", async () => {
+    params = { id: "session-1" }
+    variant = "high"
+    selectedGraphNode = {
+      providerID: "node-provider",
+      modelID: "node-model",
+      model: {},
+    }
+
+    const submit = createPromptSubmit({
+      info: () => ({ id: "session-1" }),
+      imageAttachments: () => [],
+      commentCount: () => 0,
+      autoAccept: () => false,
+      mode: () => "normal",
+      working: () => false,
+      editor: () => undefined,
+      queueScroll: () => undefined,
+      promptLength: (value) => value.reduce((sum, part) => sum + ("content" in part ? part.content.length : 0), 0),
+      addToHistory: () => undefined,
+      resetHistoryNavigation: () => undefined,
+      setMode: () => undefined,
+      setPopover: () => undefined,
+      onSubmit: () => undefined,
+    })
+
+    const event = { preventDefault: () => undefined } as unknown as Event
+
+    await submit.handleSubmit(event)
+
+    expect(optimistic[0]).toMatchObject({
+      message: {
+        agent: "agent",
+        model: { providerID: "node-provider", modelID: "node-model" },
+      },
+    })
+    expect(optimistic[0]?.message.model.variant).toBeUndefined()
+  })
+
   test("sends existing prompts to the selected node chat session", async () => {
     params = { id: "graph-session" }
 

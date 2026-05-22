@@ -23,6 +23,10 @@ export function NodeSettingsPanel() {
     if (!item?.providerID || !item.modelID) return
     return modelOptions().find((model) => model.provider.id === item.providerID && model.id === item.modelID)
   })
+  const variantOptions = createMemo(() => {
+    const variants = nodeModel()?.variants
+    return variants ? Object.keys(variants) : []
+  })
 
   const update = async (patch: Parameters<typeof graph.updateNode>[1]) => {
     const item = node()
@@ -54,6 +58,18 @@ export function NodeSettingsPanel() {
       return
     }
     void update({ providerID, modelID, model: { providerID, id: modelID } })
+  }
+
+  const updateVariant = (variant: string) => {
+    const item = node()
+    if (!item?.providerID || !item.modelID) return
+    void update({
+      model: {
+        providerID: item.providerID,
+        id: item.modelID,
+        variant: variant || undefined,
+      },
+    })
   }
 
   return (
@@ -118,6 +134,21 @@ export function NodeSettingsPanel() {
                     {(model) => <span class="truncate text-xs text-text-weak">{model().provider.name}</span>}
                   </Show>
                 </label>
+
+                <Show when={variantOptions().length > 0}>
+                  <label class="flex flex-col gap-1.5">
+                    <span class="text-xs font-medium text-text-weak">Thinking</span>
+                    <select
+                      class="h-8 rounded-md border border-border-base bg-background-strong px-2 text-sm text-text-base outline-none focus:border-border-strong"
+                      value={item.model?.variant ?? ""}
+                      onChange={(event) => updateVariant(event.currentTarget.value)}
+                    >
+                      <option value="">Session default</option>
+                      <For each={variantOptions()}>{(variant) => <option value={variant}>{variant}</option>}</For>
+                    </select>
+                    <span class="text-xs text-text-weak">Controls this node's model reasoning effort.</span>
+                  </label>
+                </Show>
 
                 <label class="flex flex-col gap-1.5">
                   <span class="text-xs font-medium text-text-weak">Instructions</span>

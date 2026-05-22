@@ -353,13 +353,17 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                       : targetSession.model
                         ? { providerID: targetSession.model.providerID, modelID: targetSession.model.id }
                         : { providerID: input.model.providerID, modelID: input.model.id }
+                  const variant =
+                    target.model?.variant ??
+                    targetSession.model?.variant ??
+                    (!target.providerID || !target.modelID ? input.session.model?.variant : undefined)
 
                   const result = yield* input.promptOps.prompt({
                     messageID: MessageID.ascending(),
                     sessionID: targetSessionID,
                     agent: targetSession.agent ?? input.session.agent ?? input.agent.name,
                     model,
-                    variant: target.model?.variant ?? targetSession.model?.variant,
+                    variant,
                     system: target.instructions,
                     parts: [{ type: "text", text: call.prompt }],
                   })
