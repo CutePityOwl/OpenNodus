@@ -28,8 +28,9 @@ export function NodeSettingsPanel() {
     if (!item?.providerID || !item.modelID) return
     return modelOptions().find((model) => model.provider.id === item.providerID && model.id === item.modelID)
   })
+  const effectiveModel = createMemo(() => nodeModel() ?? local.model.current())
   const variantOptions = createMemo(() => {
-    const variants = nodeModel()?.variants
+    const variants = effectiveModel()?.variants
     return variants ? Object.keys(variants) : []
   })
 
@@ -67,11 +68,13 @@ export function NodeSettingsPanel() {
 
   const updateVariant = (variant: string) => {
     const item = node()
-    if (!item?.providerID || !item.modelID) return
+    if (!item) return
+    const model = nodeModel() ?? local.model.current()
+    if (!model) return
     void update({
       model: {
-        providerID: item.providerID,
-        id: item.modelID,
+        providerID: model.provider.id,
+        id: model.id,
         variant: variant || undefined,
       },
     })
@@ -135,8 +138,12 @@ export function NodeSettingsPanel() {
                       {(model) => <option value={`${model.provider.id}/${model.id}`}>{model.name}</option>}
                     </For>
                   </select>
-                  <Show when={nodeModel()}>
-                    {(model) => <span class="truncate text-xs text-text-weak">{model().provider.name}</span>}
+                  <Show when={effectiveModel()}>
+                    {(model) => (
+                      <span class="truncate text-xs text-text-weak">
+                        {nodeModel() ? model().provider.name : `${model().provider.name} from session default`}
+                      </span>
+                    )}
                   </Show>
                 </label>
 

@@ -181,26 +181,26 @@
 
   .opennodus-node-connection-handle {
     z-index: 20;
-    width: 12px;
-    height: 12px;
+    width: 18px;
+    height: 18px;
     border: 2px solid var(--border-strong);
     background: var(--background-base);
     box-shadow: var(--shadow-xs);
   }
 
   .opennodus-node-connection-handle-top {
-    top: -7px;
+    top: -10px;
   }
 
   .opennodus-node-connection-handle-right {
-    right: -7px;
+    right: -10px;
   }
 
   .opennodus-node-connection-handle-bottom {
-    bottom: -7px;
+    bottom: -10px;
   }
 
   .opennodus-node-connection-handle-left {
-    left: -7px;
+    left: -10px;
   }
 }

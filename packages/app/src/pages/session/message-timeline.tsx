@@ -49,6 +49,7 @@ import { createResizeObserver } from "@solid-primitives/resize-observer"
 import { useLanguage } from "@/context/language"
 import { useSessionKey } from "@/pages/session/session-layout"
 import { useGlobalSDK } from "@/context/global-sdk"
+import { useGraph } from "@/context/graph"
 import { usePlatform } from "@/context/platform"
 import { useSettings } from "@/context/settings"
 import { useSDK } from "@/context/sdk"
@@ -276,6 +277,7 @@ export function MessageTimeline(props: {
 
   const navigate = useNavigate()
   const globalSDK = useGlobalSDK()
+  const graph = useGraph()
   const sdk = useSDK()
   const sync = useSync()
   const settings = useSettings()
@@ -389,6 +391,12 @@ export function MessageTimeline(props: {
     const value = titleLabel()?.replace(/\s+\(@[^)]+ subagent\)$/, "")
     if (value) return value
     return language.t("command.session.new")
+  })
+  const graphNode = createMemo(() => graph.nodeByChatSessionID(sessionID()))
+  const showParentPath = createMemo(() => !!parentID() && graphNode()?.type !== "orchestrator")
+  const displayChildTitle = createMemo(() => {
+    if (graphNode()?.type === "orchestrator" && parentTitle()) return parentTitle()
+    return childTitle()
   })
   const showHeader = createMemo(() => !!(titleValue() || parentID()))
 
@@ -912,6 +920,11 @@ export function MessageTimeline(props: {
   const navigateParent = () => {
     const id = parentID()
     if (!id) return
+    if (id === params.id) {
+      const orchestrator = graph.current()?.nodes.find((node) => node.type === "orchestrator")
+      graph.selectChatNode(orchestrator?.id)
+      return
+    }
     navigate(`/${params.dir}/session/${id}`)
   }
 
@@ -1274,7 +1287,7 @@ export function MessageTimeline(props: {
             <div class="h-12 w-full flex items-center justify-between gap-2">
               <div class="flex items-center gap-1 min-w-0 flex-1 pr-3">
                 <div class="flex items-center min-w-0 grow-1">
-                  <Show when={parentID()}>
+                  <Show when={showParentPath()}>
                     <button
                       type="button"
                       data-slot="session-title-parent"
@@ -1308,7 +1321,7 @@ export function MessageTimeline(props: {
                       </div>
                     </Show>
                   </div>
-                  <Show when={childTitle() || title.editing}>
+                  <Show when={displayChildTitle() || title.editing}>
                     <Show
                       when={title.editing}
                       fallback={
@@ -1317,7 +1330,7 @@ export function MessageTimeline(props: {
                           class="text-14-medium text-text-strong truncate grow-1 min-w-0"
                           onDblClick={openTitleEditor}
                         >
-                          {childTitle()}
+                          {displayChildTitle()}
                         </h1>
                       }
                     >

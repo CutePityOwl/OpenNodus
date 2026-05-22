@@ -379,6 +379,7 @@ export const dict = {
   "context.rawMessages.title": "Raw messages",
 
   "context.stats.session": "Session",
+  "context.stats.node": "Node",
   "context.stats.messages": "Messages",
   "context.stats.provider": "Provider",
   "context.stats.model": "Model",
@@ -393,6 +394,7 @@ export const dict = {
   "context.stats.assistantMessages": "Assistant Messages",
   "context.stats.totalCost": "Total Cost",
   "context.stats.sessionCreated": "Session Created",
+  "context.stats.nodeCreated": "Node Created",
   "context.stats.lastActivity": "Last Activity",
 
   "context.usage.tokens": "Tokens",
@@ -718,10 +720,15 @@ export const dict = {
   "settings.section.desktop": "Desktop",
   "settings.section.server": "Server",
   "settings.tab.general": "General",
+  "settings.tab.graphNodes": "Graph / Nodes",
   "settings.tab.shortcuts": "Shortcuts",
   "settings.desktop.section.wsl": "WSL",
   "settings.desktop.wsl.title": "WSL integration",
   "settings.desktop.wsl.description": "Run the OpenNodus server inside WSL on Windows.",
+  "settings.graphNodes.title": "Graph / Nodes",
+  "settings.graphNodes.description": "Configure graph and node behavior for OpenNodus sessions.",
+  "settings.graphNodes.edgeType.title": "Edge type",
+  "settings.graphNodes.edgeType.description": "Choose how graph connections are drawn between nodes.",
 
   "settings.general.section.appearance": "Appearance",
   "settings.general.section.advanced": "Advanced",

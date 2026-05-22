@@ -191,6 +191,7 @@ export const { use: useGraph, provider: GraphProvider } = createSimpleContext({
       if (!sessionID) return
       const graph = store.bySession[sessionID]
       if (!graph) return
+      if (store.settingsNodeID) setStore("settingsNodeID", nodeID)
       if (graph.state.selectedNodeID === nodeID) return
       if (pendingSelection.has(sessionID) && pendingSelection.get(sessionID) === nodeID) return
       pendingSelection.set(sessionID, nodeID)

@@ -20,11 +20,12 @@ import {
 import { Icon } from "@opencode-ai/ui/icon"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { showToast } from "@opencode-ai/ui/toast"
-import { For, Show, createEffect, createSignal, onCleanup, onMount } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, onCleanup, onMount } from "solid-js"
 import { createStore, reconcile } from "solid-js/store"
 import { useGraph } from "@/context/graph"
 import { usePermission } from "@/context/permission"
 import { useSDK } from "@/context/sdk"
+import { useSettings } from "@/context/settings"
 import { useSync } from "@/context/sync"
 
 type OpenNodusNodeData = {
@@ -39,7 +40,8 @@ type OpenNodusNodeData = {
 }
 
 type OpenNodusFlowNode = Node<OpenNodusNodeData, "opennodus">
-type OpenNodusFlowEdge = Edge<Record<string, unknown>, "smoothstep">
+type GraphEdgeType = "straight" | "step" | "smoothstep" | "bezier"
+type OpenNodusFlowEdge = Edge<Record<string, unknown>, GraphEdgeType>
 type GraphMenuState = {
   clientX: number
   clientY: number
@@ -235,6 +237,25 @@ const connectionHandles = [
   { id: "left", position: Position.Left, class: "opennodus-node-connection-handle-left" },
 ] as const
 
+type EdgeHandlePair = {
+  sourceHandle?: string
+  targetHandle?: string
+}
+
+function edgeHandleKey(sourceNodeID: string, targetNodeID: string) {
+  return `${sourceNodeID}->${targetNodeID}`
+}
+
+function toSourceHandle(handleID: string | null | undefined) {
+  if (!handleID) return undefined
+  return handleID.replace(/-target$/, "")
+}
+
+function toTargetHandle(handleID: string | null | undefined) {
+  if (!handleID) return undefined
+  return handleID.endsWith("-target") ? handleID : `${handleID}-target`
+}
+
 function GraphContextMenu(props: {
   state: () => GraphMenuState | undefined
   onClose: () => void
@@ -300,10 +321,13 @@ export function SessionGraph() {
   const graph = useGraph()
   const permission = usePermission()
   const sdk = useSDK()
+  const settings = useSettings()
   const sync = useSync()
   const [nodes, setNodes] = createStore<OpenNodusFlowNode[]>([])
   const [edges, setEdges] = createStore<OpenNodusFlowEdge[]>([])
+  const [edgeHandles, setEdgeHandles] = createStore<Record<string, EdgeHandlePair | undefined>>({})
   const [menu, setMenu] = createSignal<GraphMenuState | undefined>()
+  const [cursor, setCursor] = createSignal<{ x: number; y: number } | undefined>()
   let root: HTMLDivElement | undefined
 
   const persistNodeSize = (nodeID: string, size: { width: number; height: number }) => {
@@ -343,14 +367,18 @@ export function SessionGraph() {
       )
     })
     const nextEdges = current.edges.map(
-      (edge) =>
-        ({
+      (edge) => {
+        const handles = edgeHandles[edge.id] ?? edgeHandles[edgeHandleKey(edge.sourceNodeID, edge.targetNodeID)]
+        return {
           id: edge.id,
           source: edge.sourceNodeID,
           target: edge.targetNodeID,
-          type: "smoothstep",
+          sourceHandle: handles?.sourceHandle,
+          targetHandle: handles?.targetHandle,
+          type: settings.graph.edgeType(),
           markerEnd: { type: MarkerType.ArrowClosed },
-        }) satisfies OpenNodusFlowEdge,
+        } satisfies OpenNodusFlowEdge
+      },
     )
 
     setNodes(reconcile(nextNodes))
@@ -403,7 +431,15 @@ export function SessionGraph() {
     }
   }
 
-  const createEdge = async (sourceNodeID: string, targetNodeID: string) => {
+  const edgeHandlesFromConnection = (connection: Pick<Connection, "source" | "target" | "sourceHandle" | "targetHandle">, pair: { sourceNodeID: string; targetNodeID: string }) => {
+    const startedFromSource = connection.source === pair.sourceNodeID
+    return {
+      sourceHandle: toSourceHandle(startedFromSource ? connection.sourceHandle : connection.targetHandle),
+      targetHandle: toTargetHandle(startedFromSource ? connection.targetHandle : connection.sourceHandle),
+    }
+  }
+
+  const createEdge = async (sourceNodeID: string, targetNodeID: string, handles?: EdgeHandlePair) => {
     if (graph.loading) return
     const pair = edgePair(sourceNodeID, targetNodeID)
     if (!pair) {
@@ -411,16 +447,25 @@ export function SessionGraph() {
       return
     }
     try {
-      await graph.createEdge(pair)
+      const edge = await graph.createEdge(pair)
+      if (edge) {
+        const nextHandles = handles ?? edgeHandles[edgeHandleKey(pair.sourceNodeID, pair.targetNodeID)]
+        if (nextHandles) setEdgeHandles(edge.id, nextHandles)
+      }
     } catch (error) {
       console.debug("[session-graph] failed to create edge", error)
       showToast({ title: error instanceof Error ? error.message : "Failed to create graph link" })
     }
   }
 
-  const connectNodes = async (connection: Pick<Connection, "source" | "target">) => {
+  const connectNodes = async (connection: Pick<Connection, "source" | "target" | "sourceHandle" | "targetHandle">) => {
     if (!connection.source || !connection.target) return
-    await createEdge(connection.source, connection.target)
+    const pair = edgePair(connection.source, connection.target)
+    const handles = pair ? edgeHandlesFromConnection(connection, pair) : undefined
+    if (pair && (handles?.sourceHandle || handles?.targetHandle)) {
+      setEdgeHandles(edgeHandleKey(pair.sourceNodeID, pair.targetNodeID), handles)
+    }
+    await createEdge(connection.source, connection.target, handles)
   }
 
   const isValidConnection: IsValidConnection = (connection) => {
@@ -459,12 +504,37 @@ export function SessionGraph() {
     }
   }
 
+  const updateCursor = (event: PointerEvent) => {
+    const rect = root?.getBoundingClientRect()
+    if (!rect) return
+    setCursor({
+      x: event.clientX - rect.left,
+      y: event.clientY - rect.top,
+    })
+  }
+
+  const linkingPreview = createMemo(() => {
+    const point = cursor()
+    const sourceNodeID = graph.linkingSourceNodeID
+    const el = root?.querySelector(`.solid-flow__node[data-id="${sourceNodeID}"]`)
+    if (!point || !sourceNodeID || !(el instanceof HTMLElement) || !root) return
+    const rootRect = root.getBoundingClientRect()
+    const rect = el.getBoundingClientRect()
+    return {
+      x1: rect.left - rootRect.left + rect.width / 2,
+      y1: rect.top - rootRect.top + rect.height / 2,
+      x2: point.x,
+      y2: point.y,
+    }
+  })
+
   return (
     <div
       ref={(el) => {
         root = el
       }}
       class="relative h-full min-h-[220px] overflow-hidden border-b border-border-base bg-background-base"
+      onPointerMove={updateCursor}
     >
       <SolidFlow<OpenNodusFlowNode, OpenNodusFlowEdge>
         nodes={nodes}
@@ -478,7 +548,11 @@ export function SessionGraph() {
         panOnScroll
         clickConnect
         connectionMode="loose"
-        defaultEdgeOptions={{ type: "smoothstep", markerEnd: { type: MarkerType.ArrowClosed } }}
+        defaultEdgeOptions={{ type: settings.graph.edgeType(), markerEnd: { type: MarkerType.ArrowClosed } }}
+        connectionLineStyle={{
+          stroke: "var(--border-active)",
+          "stroke-width": 2,
+        }}
         isValidConnection={isValidConnection}
         onConnect={(connection) => void connectNodes(connection)}
         onNodeClick={({ node }) => void handleNodeClick(node.id)}
@@ -508,6 +582,22 @@ export function SessionGraph() {
         <MiniMap pannable zoomable width={128} height={88} />
         <GraphContextMenu state={menu} onClose={() => setMenu(undefined)} onCreate={createNode} />
       </SolidFlow>
+      <Show when={linkingPreview()} keyed>
+        {(line) => (
+          <svg class="pointer-events-none absolute inset-0 z-10 size-full" aria-hidden="true">
+            <line
+              x1={line.x1}
+              y1={line.y1}
+              x2={line.x2}
+              y2={line.y2}
+              stroke="var(--border-active)"
+              stroke-width="2"
+              stroke-linecap="round"
+              stroke-dasharray="6 4"
+            />
+          </svg>
+        )}
+      </Show>
     </div>
   )
 }

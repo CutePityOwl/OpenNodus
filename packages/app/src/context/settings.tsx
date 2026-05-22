@@ -46,6 +46,9 @@ export interface Settings {
   permissions: {
     autoApprove: boolean
   }
+  graph: {
+    edgeType: "straight" | "step" | "smoothstep" | "bezier"
+  }
   notifications: NotificationSettings
   sounds: SoundSettings
 }
@@ -130,6 +133,9 @@ const defaultSettings: Settings = {
   keybinds: {},
   permissions: {
     autoApprove: false,
+  },
+  graph: {
+    edgeType: "smoothstep",
   },
   notifications: {
     agent: true,
@@ -282,6 +288,12 @@ export const { use: useSettings, provider: SettingsProvider } = createSimpleCont
         autoApprove: withFallback(() => store.permissions?.autoApprove, defaultSettings.permissions.autoApprove),
         setAutoApprove(value: boolean) {
           setStore("permissions", "autoApprove", value)
+        },
+      },
+      graph: {
+        edgeType: withFallback(() => store.graph?.edgeType, defaultSettings.graph.edgeType),
+        setEdgeType(value: "straight" | "step" | "smoothstep" | "bezier") {
+          setStore("graph", "edgeType", value)
         },
       },
       notifications: {

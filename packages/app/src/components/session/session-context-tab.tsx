@@ -1,4 +1,4 @@
-import { createMemo, createEffect, on, onCleanup, For, Show } from "solid-js"
+import { createMemo, createEffect, createSignal, on, onCleanup, For, Show } from "solid-js"
 import type { JSX } from "solid-js"
 import { useSync } from "@/context/sync"
 import { checksum } from "@opencode-ai/core/util/encode"
@@ -12,6 +12,7 @@ import { Markdown } from "@opencode-ai/ui/markdown"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import type { Message, Part, UserMessage } from "@opencode-ai/sdk/v2/client"
 import { useLanguage } from "@/context/language"
+import { useGraph } from "@/context/graph"
 import { useProviders } from "@/hooks/use-providers"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { getSessionContextMetrics } from "./session-context-metrics"
@@ -94,13 +95,36 @@ export function SessionContextTab() {
   const sync = useSync()
   const language = useLanguage()
   const providers = useProviders()
+  const graph = useGraph()
   const { params, view } = useSessionLayout()
+  const [selectedNodeID, setSelectedNodeID] = createSignal<string | undefined>()
 
-  const info = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
+  const nodes = createMemo(() => graph.current()?.nodes ?? [])
+  const selectedNode = createMemo(() => {
+    const selected = selectedNodeID() ?? graph.activeChatNode()?.id ?? nodes()[0]?.id
+    return nodes().find((node) => node.id === selected) ?? nodes()[0]
+  })
+  const contextSessionID = createMemo(() => selectedNode()?.currentChatSessionID ?? params.id)
+  const graphInfo = createMemo(() => (params.id ? sync.session.get(params.id) : undefined))
+  const info = createMemo(() => {
+    const id = contextSessionID()
+    return id ? sync.session.get(id) : undefined
+  })
+
+  createEffect(() => {
+    const node = selectedNode()
+    if (!selectedNodeID() && node) setSelectedNodeID(node.id)
+  })
+
+  createEffect(() => {
+    const id = contextSessionID()
+    if (!id) return
+    sync.session.get(id)
+  })
 
   const messages = createMemo(
     () => {
-      const id = params.id
+      const id = contextSessionID()
       if (!id) return emptyMessages
       return (sync.data.message[id] ?? []) as Message[]
     },
@@ -135,6 +159,7 @@ export function SessionContextTab() {
   const metrics = createMemo(() => getSessionContextMetrics(messages(), providers.all()))
   const ctx = createMemo(() => metrics().context)
   const formatter = createMemo(() => createSessionContextFormatter(language.intl()))
+  const numericTime = (value: unknown) => (typeof value === "number" ? value : undefined)
 
   const cost = createMemo(() => {
     return usd().format(metrics().totalCost)
@@ -197,7 +222,8 @@ export function SessionContextTab() {
   }
 
   const stats = [
-    { label: "context.stats.session", value: () => info()?.title ?? params.id ?? "—" },
+    { label: "context.stats.session", value: () => graphInfo()?.title ?? params.id ?? "—" },
+    { label: "context.stats.node", value: () => selectedNode()?.name ?? "—" },
     { label: "context.stats.messages", value: () => counts().all.toLocaleString(language.intl()) },
     { label: "context.stats.provider", value: providerLabel },
     { label: "context.stats.model", value: modelLabel },
@@ -214,7 +240,8 @@ export function SessionContextTab() {
     { label: "context.stats.userMessages", value: () => counts().user.toLocaleString(language.intl()) },
     { label: "context.stats.assistantMessages", value: () => counts().assistant.toLocaleString(language.intl()) },
     { label: "context.stats.totalCost", value: cost },
-    { label: "context.stats.sessionCreated", value: () => formatter().time(info()?.time.created) },
+    { label: "context.stats.sessionCreated", value: () => formatter().time(graphInfo()?.time.created) },
+    { label: "context.stats.nodeCreated", value: () => formatter().time(numericTime(selectedNode()?.time.created)) },
     { label: "context.stats.lastActivity", value: () => formatter().time(ctx()?.message.time.created) },
   ] satisfies { label: string; value: () => JSX.Element }[]
 
@@ -277,6 +304,24 @@ export function SessionContextTab() {
       onScroll={handleScroll}
     >
       <div class="px-6 pt-4 pb-10 flex flex-col gap-10">
+        <Show when={nodes().length > 0}>
+          <label class="flex max-w-sm flex-col gap-1.5">
+            <span class="text-12-regular text-text-weak">Node</span>
+            <select
+              class="h-8 rounded-md border border-border-base bg-background-strong px-2 text-sm text-text-base outline-none focus:border-border-strong"
+              value={selectedNode()?.id ?? ""}
+              onChange={(event) => setSelectedNodeID(event.currentTarget.value || undefined)}
+            >
+              <For each={nodes()}>
+                {(node) => (
+                  <option value={node.id}>
+                    {node.name} ({node.type})
+                  </option>
+                )}
+              </For>
+            </select>
+          </label>
+        </Show>
         <div class="grid grid-cols-1 @[32rem]:grid-cols-2 gap-4">
           <For each={stats}>
             {(stat) => <Stat label={language.t(stat.label as Parameters<typeof language.t>[0])} value={stat.value()} />}
