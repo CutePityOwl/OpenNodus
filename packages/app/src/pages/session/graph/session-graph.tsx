@@ -144,7 +144,15 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
         id="easy-connect"
         type="source"
         position={Position.Right}
+        isConnectableStart
+        isConnectableEnd
         class="opennodus-node-easy-connect-handle"
+        style={{
+          inset: "0",
+          width: "100%",
+          height: "100%",
+          transform: "none",
+        }}
       />
       <NodeResizer
         visible={selected()}
