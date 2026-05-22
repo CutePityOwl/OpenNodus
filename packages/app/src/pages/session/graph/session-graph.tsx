@@ -1,8 +1,16 @@
 import type { GraphNode } from "@opencode-ai/sdk/v2/client"
 import {
   Background,
+  BaseEdge,
   Controls,
+  getBezierPath,
+  getSmoothStepPath,
+  getStraightPath,
   Handle,
+  type ConnectionLineComponentProps,
+  type EdgeProps,
+  type EdgeTypes,
+  type InternalNode,
   MarkerType,
   MiniMap,
   NodeResizer,
@@ -36,13 +44,12 @@ type OpenNodusNodeData = {
   working: boolean
   onOpenSettings: (nodeID: string) => void
   onOpenContextMenu: (event: MouseEvent, nodeID: string) => void
-  onStartLink: (nodeID: string) => void
   onResizeEnd: (nodeID: string, size: { width: number; height: number }) => void
 }
 
 type OpenNodusFlowNode = Node<OpenNodusNodeData, "opennodus">
 type GraphEdgeType = "straight" | "step" | "smoothstep" | "bezier"
-type OpenNodusFlowEdge = Edge<Record<string, unknown>, GraphEdgeType>
+type OpenNodusFlowEdge = Edge<{ shape: GraphEdgeType }, "opennodus-floating">
 type GraphMenuState = {
   clientX: number
   clientY: number
@@ -75,7 +82,6 @@ function toFlowNode(
   working: boolean,
   onOpenSettings: OpenNodusNodeData["onOpenSettings"],
   onOpenContextMenu: OpenNodusNodeData["onOpenContextMenu"],
-  onStartLink: OpenNodusNodeData["onStartLink"],
   onResizeEnd: OpenNodusNodeData["onResizeEnd"],
 ) {
   const size = nodeSize(node)
@@ -94,7 +100,6 @@ function toFlowNode(
       working,
       onOpenSettings,
       onOpenContextMenu,
-      onStartLink,
       onResizeEnd,
     },
     selected: selectedNodeID === node.id,
@@ -104,6 +109,7 @@ function toFlowNode(
     initialHeight: size.height,
     sourcePosition: Position.Right,
     targetPosition: Position.Left,
+    dragHandle: ".opennodus-node-drag-handle",
     class: "opennodus-flow-node-shell",
   } satisfies OpenNodusFlowNode
 }
@@ -134,6 +140,12 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
       }}
       onContextMenu={(event) => props.data.onOpenContextMenu(event, props.id)}
     >
+      <Handle
+        id="easy-connect"
+        type="source"
+        position={Position.Right}
+        class="opennodus-node-easy-connect-handle"
+      />
       <NodeResizer
         visible={selected()}
         minWidth={180}
@@ -149,9 +161,10 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
           "bg-background-base": node().type === "agent",
         }}
       >
-        <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border-base px-3">
+        <div class="opennodus-node-drag-handle flex h-9 shrink-0 cursor-grab items-center gap-2 border-b border-border-base px-3 active:cursor-grabbing">
+          <div class="opennodus-node-drag-handle absolute inset-x-0 top-0 z-30 h-9 cursor-grab rounded-t-md active:cursor-grabbing" />
           <div
-            class="flex size-5 shrink-0 items-center justify-center rounded-sm"
+            class="relative z-40 flex size-5 shrink-0 items-center justify-center rounded-sm"
             classList={{
               "bg-surface-raised-base text-icon-info-active": node().type === "orchestrator",
               "bg-surface-raised-base text-icon-base": node().type === "agent",
@@ -159,29 +172,21 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
           >
             <Icon name={node().type === "orchestrator" ? "brain" : "bubble-5"} size="small" />
           </div>
-          <div class="min-w-0 flex-1 truncate text-sm font-medium text-text-base">{node().name}</div>
+          <div class="relative z-40 min-w-0 flex-1 truncate text-sm font-medium text-text-base">{node().name}</div>
           <Show when={permissionPending()}>
-            <Icon name="warning" size="small" class="shrink-0 text-icon-warning-base" />
+            <Icon name="warning" size="small" class="relative z-40 shrink-0 text-icon-warning-base" />
           </Show>
           <Show when={working()}>
-            <span class="size-2 shrink-0 rounded-full bg-icon-success-base animate-pulse" aria-label="Node running" />
+            <span
+              class="relative z-40 size-2 shrink-0 rounded-full bg-icon-success-base animate-pulse"
+              aria-label="Node running"
+            />
           </Show>
-          <div class="text-[10px] font-medium uppercase tracking-normal text-text-weak">{node().type}</div>
-          <IconButton
-            icon="link"
-            variant="ghost"
-            class="nodrag size-7 shrink-0"
-            classList={{ "text-icon-info-active": linkingSource() }}
-            aria-label="Link from this node"
-            onClick={(event) => {
-              event.stopPropagation()
-              props.data.onStartLink(props.id)
-            }}
-          />
+          <div class="relative z-40 text-[10px] font-medium uppercase tracking-normal text-text-weak">{node().type}</div>
           <IconButton
             icon="settings-gear"
             variant="ghost"
-            class="nodrag -mr-1 size-7 shrink-0"
+            class="nodrag relative z-40 -mr-1 size-7 shrink-0"
             aria-label="Node settings"
             onClick={(event) => {
               event.stopPropagation()
@@ -208,27 +213,6 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
           </div>
         </div>
       </div>
-
-      <For each={connectionHandles}>
-        {(handle) => (
-          <Handle
-            id={handle.id}
-            type="source"
-            position={handle.position}
-            class={`nodrag nopan opennodus-node-connection-handle ${handle.class}`}
-          />
-        )}
-      </For>
-      <For each={connectionHandles}>
-        {(handle) => (
-          <Handle
-            id={`${handle.id}-target`}
-            type="target"
-            position={handle.position}
-            class={`nodrag nopan opennodus-node-connection-handle ${handle.class}`}
-          />
-        )}
-      </For>
     </div>
   )
 }
@@ -237,31 +221,150 @@ const nodeTypes = {
   opennodus: OpenNodusNode,
 } satisfies NodeTypes
 
-const connectionHandles = [
-  { id: "top", position: Position.Top, class: "opennodus-node-connection-handle-top" },
-  { id: "right", position: Position.Right, class: "opennodus-node-connection-handle-right" },
-  { id: "bottom", position: Position.Bottom, class: "opennodus-node-connection-handle-bottom" },
-  { id: "left", position: Position.Left, class: "opennodus-node-connection-handle-left" },
-] as const
-
-type EdgeHandlePair = {
-  sourceHandle?: string
-  targetHandle?: string
+type NodeRect = {
+  x: number
+  y: number
+  width: number
+  height: number
 }
 
-function edgeHandleKey(sourceNodeID: string, targetNodeID: string) {
-  return `${sourceNodeID}->${targetNodeID}`
+function internalNodeRect(node: InternalNode<OpenNodusFlowNode>): NodeRect {
+  return {
+    x: node.internals.positionAbsolute.x,
+    y: node.internals.positionAbsolute.y,
+    width: node.measured?.width ?? node.width ?? node.initialWidth ?? 1,
+    height: node.measured?.height ?? node.height ?? node.initialHeight ?? 1,
+  }
 }
 
-function toSourceHandle(handleID: string | null | undefined) {
-  if (!handleID) return undefined
-  return handleID.replace(/-target$/, "")
+function nodeCenter(rect: NodeRect) {
+  return {
+    x: rect.x + rect.width / 2,
+    y: rect.y + rect.height / 2,
+  }
 }
 
-function toTargetHandle(handleID: string | null | undefined) {
-  if (!handleID) return undefined
-  return handleID.endsWith("-target") ? handleID : `${handleID}-target`
+function nodeIntersection(rect: NodeRect, target: { x: number; y: number }) {
+  const center = nodeCenter(rect)
+  const w = rect.width / 2
+  const h = rect.height / 2
+  const dx = target.x - center.x
+  const dy = target.y - center.y
+  const xx1 = dx / (2 * w) - dy / (2 * h)
+  const yy1 = dx / (2 * w) + dy / (2 * h)
+  const scale = 1 / (Math.abs(xx1) + Math.abs(yy1) || 1)
+  const xx3 = scale * xx1
+  const yy3 = scale * yy1
+  return {
+    x: w * (xx3 + yy3) + center.x,
+    y: h * (-xx3 + yy3) + center.y,
+  }
 }
+
+function edgePosition(rect: NodeRect, point: { x: number; y: number }) {
+  const px = Math.round(point.x)
+  const py = Math.round(point.y)
+  const left = Math.round(rect.x)
+  const right = Math.round(rect.x + rect.width)
+  const top = Math.round(rect.y)
+  const bottom = Math.round(rect.y + rect.height)
+
+  if (px <= left + 1) return Position.Left
+  if (px >= right - 1) return Position.Right
+  if (py <= top + 1) return Position.Top
+  if (py >= bottom - 1) return Position.Bottom
+  return Position.Right
+}
+
+function floatingEdgeParams(source: InternalNode<OpenNodusFlowNode>, target: InternalNode<OpenNodusFlowNode>) {
+  const sourceRect = internalNodeRect(source)
+  const targetRect = internalNodeRect(target)
+  const sourcePoint = nodeIntersection(sourceRect, nodeCenter(targetRect))
+  const targetPoint = nodeIntersection(targetRect, nodeCenter(sourceRect))
+
+  return {
+    sourceX: sourcePoint.x,
+    sourceY: sourcePoint.y,
+    targetX: targetPoint.x,
+    targetY: targetPoint.y,
+    sourcePosition: edgePosition(sourceRect, sourcePoint),
+    targetPosition: edgePosition(targetRect, targetPoint),
+  }
+}
+
+function floatingPath(
+  params: ReturnType<typeof floatingEdgeParams>,
+  shape: GraphEdgeType | undefined,
+): ReturnType<typeof getBezierPath> {
+  if (shape === "straight") return getStraightPath(params)
+  if (shape === "step") return getSmoothStepPath({ ...params, borderRadius: 0 })
+  if (shape === "smoothstep") return getSmoothStepPath(params)
+  return getBezierPath(params)
+}
+
+function FloatingEdge(props: EdgeProps<{ shape: GraphEdgeType }, "opennodus-floating">) {
+  const flow = useSolidFlow<OpenNodusFlowNode, OpenNodusFlowEdge>()
+  const source = () => flow.getInternalNode(props.source)
+  const target = () => flow.getInternalNode(props.target)
+  const path = createMemo(() => {
+    const sourceNode = source()
+    const targetNode = target()
+    if (!sourceNode || !targetNode) return
+    return floatingPath(floatingEdgeParams(sourceNode, targetNode), props.data?.shape)
+  })
+
+  return (
+    <Show when={path()} keyed>
+      {([edgePath]) => (
+        <BaseEdge
+          id={props.id}
+          path={edgePath}
+          markerStart={props.markerStart}
+          markerEnd={props.markerEnd}
+          style={props.style}
+          class={props.class}
+        />
+      )}
+    </Show>
+  )
+}
+
+function FloatingConnectionLine(props: ConnectionLineComponentProps<OpenNodusFlowNode>) {
+  const path = createMemo(() => {
+    const sourceRect = internalNodeRect(props.fromNode)
+    const targetCenter = props.toNode ? nodeCenter(internalNodeRect(props.toNode)) : { x: props.toX, y: props.toY }
+    const sourcePoint = nodeIntersection(sourceRect, targetCenter)
+    const targetPoint = props.toNode
+      ? nodeIntersection(internalNodeRect(props.toNode), nodeCenter(sourceRect))
+      : { x: props.toX, y: props.toY }
+    const params = {
+      sourceX: sourcePoint.x,
+      sourceY: sourcePoint.y,
+      targetX: targetPoint.x,
+      targetY: targetPoint.y,
+      sourcePosition: edgePosition(sourceRect, sourcePoint),
+      targetPosition: props.toNode ? edgePosition(internalNodeRect(props.toNode), targetPoint) : (props.toPosition as Position),
+    }
+    return floatingPath(params, "straight")[0]
+  })
+
+  return (
+    <g>
+      <path
+        d={path()}
+        fill="none"
+        stroke="var(--border-active)"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-dasharray="6 4"
+      />
+    </g>
+  )
+}
+
+const edgeTypes = {
+  "opennodus-floating": FloatingEdge,
+} satisfies EdgeTypes
 
 function GraphContextMenu(props: {
   state: () => GraphMenuState | undefined
@@ -398,19 +501,12 @@ export function SessionGraph() {
   const sync = useSync()
   const [nodes, setNodes] = createStore<OpenNodusFlowNode[]>([])
   const [edges, setEdges] = createStore<OpenNodusFlowEdge[]>([])
-  const [edgeHandles, setEdgeHandles] = createStore<Record<string, EdgeHandlePair | undefined>>({})
   const [menu, setMenu] = createSignal<GraphMenuState | undefined>()
   const [nodeMenu, setNodeMenu] = createSignal<NodeMenuState | undefined>()
-  const [cursor, setCursor] = createSignal<{ x: number; y: number } | undefined>()
   let root: HTMLDivElement | undefined
 
   const persistNodeSize = (nodeID: string, size: { width: number; height: number }) => {
     void graph.updateNode(nodeID, { size })
-  }
-
-  const startNodeLink = (nodeID: string) => {
-    void graph.selectNode(nodeID)
-    graph.startLink(nodeID)
   }
 
   const openNodeSettings = (nodeID: string) => {
@@ -437,23 +533,19 @@ export function SessionGraph() {
         !!chatSessionID && sync.data.session_working(chatSessionID),
         openNodeSettings,
         openNodeMenu,
-        startNodeLink,
         persistNodeSize,
       )
     })
     const nextEdges = current.edges.map(
-      (edge) => {
-        const handles = edgeHandles[edge.id] ?? edgeHandles[edgeHandleKey(edge.sourceNodeID, edge.targetNodeID)]
-        return {
+      (edge) =>
+        ({
           id: edge.id,
           source: edge.sourceNodeID,
           target: edge.targetNodeID,
-          sourceHandle: handles?.sourceHandle,
-          targetHandle: handles?.targetHandle,
-          type: settings.graph.edgeType(),
+          type: "opennodus-floating",
+          data: { shape: settings.graph.edgeType() },
           markerEnd: { type: MarkerType.ArrowClosed },
-        } satisfies OpenNodusFlowEdge
-      },
+        }) satisfies OpenNodusFlowEdge,
     )
 
     setNodes(reconcile(nextNodes))
@@ -550,15 +642,7 @@ export function SessionGraph() {
     }
   }
 
-  const edgeHandlesFromConnection = (connection: Pick<Connection, "source" | "target" | "sourceHandle" | "targetHandle">, pair: { sourceNodeID: string; targetNodeID: string }) => {
-    const startedFromSource = connection.source === pair.sourceNodeID
-    return {
-      sourceHandle: toSourceHandle(startedFromSource ? connection.sourceHandle : connection.targetHandle),
-      targetHandle: toTargetHandle(startedFromSource ? connection.targetHandle : connection.sourceHandle),
-    }
-  }
-
-  const createEdge = async (sourceNodeID: string, targetNodeID: string, handles?: EdgeHandlePair) => {
+  const createEdge = async (sourceNodeID: string, targetNodeID: string) => {
     if (graph.loading) return
     const pair = edgePair(sourceNodeID, targetNodeID)
     if (!pair) {
@@ -566,25 +650,16 @@ export function SessionGraph() {
       return
     }
     try {
-      const edge = await graph.createEdge(pair)
-      if (edge) {
-        const nextHandles = handles ?? edgeHandles[edgeHandleKey(pair.sourceNodeID, pair.targetNodeID)]
-        if (nextHandles) setEdgeHandles(edge.id, nextHandles)
-      }
+      await graph.createEdge(pair)
     } catch (error) {
       console.debug("[session-graph] failed to create edge", error)
       showToast({ title: error instanceof Error ? error.message : "Failed to create graph link" })
     }
   }
 
-  const connectNodes = async (connection: Pick<Connection, "source" | "target" | "sourceHandle" | "targetHandle">) => {
+  const connectNodes = async (connection: Pick<Connection, "source" | "target">) => {
     if (!connection.source || !connection.target) return
-    const pair = edgePair(connection.source, connection.target)
-    const handles = pair ? edgeHandlesFromConnection(connection, pair) : undefined
-    if (pair && (handles?.sourceHandle || handles?.targetHandle)) {
-      setEdgeHandles(edgeHandleKey(pair.sourceNodeID, pair.targetNodeID), handles)
-    }
-    await createEdge(connection.source, connection.target, handles)
+    await createEdge(connection.source, connection.target)
   }
 
   const isValidConnection: IsValidConnection = (connection) => {
@@ -603,17 +678,9 @@ export function SessionGraph() {
     void graph.selectNode(nodeID)
   }
 
-  const handleNodeClick = async (nodeID: string) => {
+  const handleNodeClick = (nodeID: string) => {
     if (graph.loading) return
-    const sourceNodeID = graph.linkingSourceNodeID
-    if (!sourceNodeID) {
-      selectNode(nodeID)
-      return
-    }
-
-    graph.clearLink()
     selectNode(nodeID)
-    await createEdge(sourceNodeID, nodeID)
   }
 
   const deleteEdges = (deleted: OpenNodusFlowEdge[]) => {
@@ -623,51 +690,28 @@ export function SessionGraph() {
     }
   }
 
-  const updateCursor = (event: PointerEvent) => {
-    const rect = root?.getBoundingClientRect()
-    if (!rect) return
-    setCursor({
-      x: event.clientX - rect.left,
-      y: event.clientY - rect.top,
-    })
-  }
-
-  const linkingPreview = createMemo(() => {
-    const point = cursor()
-    const sourceNodeID = graph.linkingSourceNodeID
-    const el = root?.querySelector(`.solid-flow__node[data-id="${sourceNodeID}"]`)
-    if (!point || !sourceNodeID || !(el instanceof HTMLElement) || !root) return
-    const rootRect = root.getBoundingClientRect()
-    const rect = el.getBoundingClientRect()
-    return {
-      x1: rect.left - rootRect.left + rect.width / 2,
-      y1: rect.top - rootRect.top + rect.height / 2,
-      x2: point.x,
-      y2: point.y,
-    }
-  })
-
   return (
     <div
       ref={(el) => {
         root = el
       }}
       class="relative h-full min-h-[220px] overflow-hidden border-b border-border-base bg-background-base"
-      onPointerMove={updateCursor}
     >
       <SolidFlow<OpenNodusFlowNode, OpenNodusFlowEdge>
         nodes={nodes}
         edges={edges}
         nodeTypes={nodeTypes}
+        edgeTypes={edgeTypes}
         fitView
         minZoom={0.25}
         maxZoom={1.6}
         snapGrid={[12, 12]}
         selectNodesOnDrag
         panOnScroll
-        clickConnect
+        clickConnect={false}
         connectionMode="loose"
-        defaultEdgeOptions={{ type: settings.graph.edgeType(), markerEnd: { type: MarkerType.ArrowClosed } }}
+        defaultEdgeOptions={{ type: "opennodus-floating", markerEnd: { type: MarkerType.ArrowClosed } }}
+        connectionLineComponent={FloatingConnectionLine}
         connectionLineStyle={{
           stroke: "var(--border-active)",
           "stroke-width": 2,
@@ -690,7 +734,7 @@ export function SessionGraph() {
         onSelectionChange={({ nodes }) => {
           if (graph.loading) return
           const first = nodes[0]
-          if (first && !graph.linkingSourceNodeID) selectNode(first.id)
+          if (first) selectNode(first.id)
         }}
         class="opennodus-session-graph"
         classList={{
@@ -709,22 +753,6 @@ export function SessionGraph() {
           onDelete={deleteNode}
         />
       </SolidFlow>
-      <Show when={linkingPreview()} keyed>
-        {(line) => (
-          <svg class="pointer-events-none absolute inset-0 z-10 size-full" aria-hidden="true">
-            <line
-              x1={line.x1}
-              y1={line.y1}
-              x2={line.x2}
-              y2={line.y2}
-              stroke="var(--border-active)"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-dasharray="6 4"
-            />
-          </svg>
-        )}
-      </Show>
     </div>
   )
 }
