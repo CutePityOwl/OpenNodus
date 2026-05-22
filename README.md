@@ -1,59 +1,43 @@
+<p align="center">
+  <img src="https://raw.githubusercontent.com/CutePityOwl/OpenNodus/main/preview.png" alt="OpenNodus preview" width="100%">
+</p>
+
 # OpenNodus
 
-<img src="https://raw.githubusercontent.com/CutePityOwl/OpenNodus/main/preview.png" alt="OpenNodus preview" width="100%">
+Graph-based AI agent orchestration for the desktop.
 
-OpenNodus is a desktop-focused fork of OpenCode that turns agent work into a visual node graph.
+OpenNodus is a desktop-focused fork of [OpenCode](https://github.com/anomalyco/opencode). It keeps the desktop app and runtime foundation, then reworks the chat workspace around a visual graph where orchestrators and agents are connected as nodes.
 
-Instead of working with a single chat target, OpenNodus is being shaped around graph-based AI orchestration: orchestrators and agents live as connected nodes, each with its own model, provider, instructions, permissions, tools, MCP rules, and chat memory behavior.
+---
 
-## Features
+### What is different
 
-- Desktop-first Electron app for Windows, macOS, and Linux.
-- Visual node graph built into the session workspace.
-- Orchestrator and Agent node types.
-- Drag-to-connect node linking with floating graph edges.
-- Per-node provider, model, reasoning, instruction, and permission settings.
-- Per-node chat targeting from the composer.
-- Same-chat memory mode, with reset controls for node chat context.
-- Node actions for detach, clone, and delete.
-- MCP/tool policy groundwork for node-specific agent execution.
+OpenNodus is being built around multi-agent sessions instead of a single active chat.
 
-## Status
+- Add Orchestrator and Agent nodes to a session graph.
+- Connect nodes visually to define which agents an orchestrator can call.
+- Chat with a selected node from the composer.
+- Configure each node with its own provider, model, reasoning mode, instructions, permissions, tools, MCP policies, and chat memory.
+- Reuse or reset per-node chat context with Same chat mode.
+- Detach, clone, and delete nodes from the graph.
 
-OpenNodus is an active fork in early overhaul. The desktop app builds and runs, while the multi-agent graph system is being expanded incrementally on top of OpenCode's runtime.
+### Status
 
-## Build
+OpenNodus is in active early development. The desktop app builds and runs, and the graph workflow is being expanded incrementally on top of OpenCode's runtime.
 
-Install dependencies:
+### Development
 
 ```bash
 bun install
+bun run --cwd packages/desktop build
 ```
 
-Build the desktop app:
+Set `OPENCODE_CHANNEL=dev` when building development desktop artifacts.
 
-```bash
-OPENCODE_CHANNEL=dev bun run --cwd packages/desktop build
-```
+### Building on OpenCode
 
-Windows PowerShell:
+OpenNodus is an independent fork and is not affiliated with, endorsed by, or maintained by the OpenCode team.
 
-```powershell
-$env:OPENCODE_CHANNEL='dev'; bun run --cwd packages/desktop build
-```
+### License
 
-Create an unpacked Windows build:
-
-```powershell
-$env:OPENCODE_CHANNEL='dev'; bun --cwd packages/desktop electron-builder --win --dir --config electron-builder.config.ts
-```
-
-The local Windows executable is produced under:
-
-```text
-packages/desktop/dist/win-unpacked/OpenNodus Dev.exe
-```
-
-## Credits
-
-OpenNodus is based on OpenCode and keeps the desktop app/runtime foundation while exploring a graph-first multi-agent workflow.
+MIT
