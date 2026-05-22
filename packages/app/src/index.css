@@ -144,6 +144,8 @@
   .opennodus-session-graph {
     --xy-edge-stroke: var(--border-strong);
     --xy-edge-stroke-selected: var(--border-active);
+    --xy-connectionline-stroke: var(--border-active);
+    --xy-connectionline-stroke-width: 2;
     --xy-handle-background-color: var(--background-base);
     --xy-handle-border-color: var(--border-strong);
     --xy-minimap-background-color: var(--background-base);
@@ -186,11 +188,19 @@
     box-shadow: var(--shadow-xs);
   }
 
-  .opennodus-node-connection-handle-source {
+  .opennodus-node-connection-handle-top {
+    top: -7px;
+  }
+
+  .opennodus-node-connection-handle-right {
     right: -7px;
   }
 
-  .opennodus-node-connection-handle-target {
+  .opennodus-node-connection-handle-bottom {
+    bottom: -7px;
+  }
+
+  .opennodus-node-connection-handle-left {
     left: -7px;
   }
 }

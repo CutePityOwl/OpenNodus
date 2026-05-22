@@ -163,11 +163,9 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
             variant="ghost"
             class="nodrag size-7 shrink-0"
             classList={{ "text-icon-info-active": linkingSource() }}
-            disabled={node().type !== "orchestrator"}
             aria-label="Link from this node"
             onClick={(event) => {
               event.stopPropagation()
-              if (node().type !== "orchestrator") return
               props.data.onStartLink(props.id)
             }}
           />
@@ -202,20 +200,26 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
         </div>
       </div>
 
-      <Show when={node().type === "agent"}>
-        <Handle
-          type="target"
-          position="left"
-          class="nodrag nopan opennodus-node-connection-handle opennodus-node-connection-handle-target"
-        />
-      </Show>
-      <Show when={node().type === "orchestrator"}>
-        <Handle
-          type="source"
-          position="right"
-          class="nodrag nopan opennodus-node-connection-handle opennodus-node-connection-handle-source"
-        />
-      </Show>
+      <For each={connectionHandles}>
+        {(handle) => (
+          <Handle
+            id={handle.id}
+            type="source"
+            position={handle.position}
+            class={`nodrag nopan opennodus-node-connection-handle ${handle.class}`}
+          />
+        )}
+      </For>
+      <For each={connectionHandles}>
+        {(handle) => (
+          <Handle
+            id={`${handle.id}-target`}
+            type="target"
+            position={handle.position}
+            class={`nodrag nopan opennodus-node-connection-handle ${handle.class}`}
+          />
+        )}
+      </For>
     </div>
   )
 }
@@ -223,6 +227,13 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
 const nodeTypes = {
   opennodus: OpenNodusNode,
 } satisfies NodeTypes
+
+const connectionHandles = [
+  { id: "top", position: Position.Top, class: "opennodus-node-connection-handle-top" },
+  { id: "right", position: Position.Right, class: "opennodus-node-connection-handle-right" },
+  { id: "bottom", position: Position.Bottom, class: "opennodus-node-connection-handle-bottom" },
+  { id: "left", position: Position.Left, class: "opennodus-node-connection-handle-left" },
+] as const
 
 function GraphContextMenu(props: {
   state: () => GraphMenuState | undefined
@@ -378,10 +389,29 @@ export function SessionGraph() {
     }
   }
 
+  const edgePair = (firstNodeID: string, secondNodeID: string) => {
+    const current = graph.current()
+    if (!current || firstNodeID === secondNodeID) return
+    const first = current.nodes.find((node) => node.id === firstNodeID)
+    const second = current.nodes.find((node) => node.id === secondNodeID)
+    if (!first || !second) return
+    if (first.type === "orchestrator" && second.type === "agent") {
+      return { sourceNodeID: first.id, targetNodeID: second.id }
+    }
+    if (first.type === "agent" && second.type === "orchestrator") {
+      return { sourceNodeID: second.id, targetNodeID: first.id }
+    }
+  }
+
   const createEdge = async (sourceNodeID: string, targetNodeID: string) => {
     if (graph.loading) return
+    const pair = edgePair(sourceNodeID, targetNodeID)
+    if (!pair) {
+      showToast({ title: "Only Orchestrator to Agent links are supported for now" })
+      return
+    }
     try {
-      await graph.createEdge({ sourceNodeID, targetNodeID })
+      await graph.createEdge(pair)
     } catch (error) {
       console.debug("[session-graph] failed to create edge", error)
       showToast({ title: error instanceof Error ? error.message : "Failed to create graph link" })
@@ -396,11 +426,10 @@ export function SessionGraph() {
   const isValidConnection: IsValidConnection = (connection) => {
     const current = graph.current()
     if (!current || !connection.source || !connection.target || connection.source === connection.target) return false
-    const source = current.nodes.find((node) => node.id === connection.source)
-    const target = current.nodes.find((node) => node.id === connection.target)
-    if (source?.type !== "orchestrator" || target?.type !== "agent") return false
+    const pair = edgePair(connection.source, connection.target)
+    if (!pair) return false
     return !current.edges.some(
-      (edge) => edge.sourceNodeID === connection.source && edge.targetNodeID === connection.target,
+      (edge) => edge.sourceNodeID === pair.sourceNodeID && edge.targetNodeID === pair.targetNodeID,
     )
   }
 
@@ -448,6 +477,7 @@ export function SessionGraph() {
         selectNodesOnDrag
         panOnScroll
         clickConnect
+        connectionMode="loose"
         defaultEdgeOptions={{ type: "smoothstep", markerEnd: { type: MarkerType.ArrowClosed } }}
         isValidConnection={isValidConnection}
         onConnect={(connection) => void connectNodes(connection)}
