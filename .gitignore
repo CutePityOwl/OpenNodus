@@ -33,4 +33,5 @@ tsconfig.tsbuildinfo
 
 # Documentation folders excluded from repository push
 DOCS/
+PLANS/
 packages/docs/
