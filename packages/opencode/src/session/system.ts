@@ -9,6 +9,7 @@ import PROMPT_GEMINI from "./prompt/gemini.txt"
 import PROMPT_GPT from "./prompt/gpt.txt"
 import PROMPT_KIMI from "./prompt/kimi.txt"
 import PROMPT_OPENNODUS_AGENT from "./prompt/opennodus-agent.txt"
+import PROMPT_OPENNODUS_ORCHESTRATOR_BASE from "./prompt/opennodus-orchestrator-base.txt"
 import PROMPT_OPENNODUS_ORCHESTRATOR from "./prompt/opennodus-orchestrator.txt"
 
 import PROMPT_CODEX from "./prompt/codex.txt"
@@ -21,7 +22,12 @@ import { Graph } from "@/graph/graph"
 import type { Info as GraphInfo, Node as GraphNode } from "@/graph/schema"
 import type { SessionID } from "./schema"
 
-export function provider(model: Provider.Model) {
+export const OPENNODUS_ORCHESTRATOR_BASE_MARKER = "<opennodus_orchestrator_base_prompt />"
+
+export function provider(model: Provider.Model, input?: { system?: string[] }) {
+  if (input?.system?.some((item) => item.includes(OPENNODUS_ORCHESTRATOR_BASE_MARKER))) {
+    return [PROMPT_OPENNODUS_ORCHESTRATOR_BASE]
+  }
   if (model.api.id.includes("gpt-4") || model.api.id.includes("o1") || model.api.id.includes("o3"))
     return [PROMPT_BEAST]
   if (model.api.id.includes("gpt")) {
@@ -122,6 +128,7 @@ export const layer = Layer.effect(
       return [
         `<opennodus_context>`,
         `Graph session: ${info.state.graphSessionID}`,
+        agents.length ? OPENNODUS_ORCHESTRATOR_BASE_MARKER : undefined,
         ``,
         `Current node:`,
         formatNode(node, model, "full"),
@@ -131,12 +138,17 @@ export const layer = Layer.effect(
         agents.length ? agents.map((agent) => formatNode(agent, model)).join("\n") : "none",
         ``,
         `Coordination guidance:`,
+        agents.length
+          ? `- Delegation policy active: connected agents exist, so workspace-changing and role-matching tasks must be delegated.`
+          : `- No connected agents are available, so direct work may use the normal available tools and permissions.`,
         `- Call only connected agents through graph_agent.`,
         `- Use sequential calls when one agent's result should inform another.`,
         `- Use parallel calls only when tasks are independent.`,
         `- Disconnected nodes are not callable.`,
         `</opennodus_context>`,
-      ].join("\n")
+      ]
+        .filter((item): item is string => item !== undefined)
+        .join("\n")
     }
 
     const agentContext = (info: GraphInfo, node: GraphNode, model: Provider.Model) => {

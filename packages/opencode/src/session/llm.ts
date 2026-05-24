@@ -108,14 +108,15 @@ const live: Layer.Layer<
 
       // TODO: move this to a proper hook
       const isOpenaiOauth = item.id === "openai" && info?.type === "oauth"
+      const inputSystem = input.system.filter((item) => !item.includes(SystemPrompt.OPENNODUS_ORCHESTRATOR_BASE_MARKER))
 
       const system: string[] = []
       system.push(
         [
           // use agent prompt otherwise provider prompt
-          ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model)),
+          ...(input.agent.prompt ? [input.agent.prompt] : SystemPrompt.provider(input.model, { system: input.system })),
           // any custom prompt passed into this call
-          ...input.system,
+          ...inputSystem,
           // any custom prompt from last user message
           ...(input.user.system ? [input.user.system] : []),
         ]
