@@ -80,6 +80,8 @@ IMPORTANT:
 - This tool provides your final answer - no further actions are taken after calling it`
 
 const STRUCTURED_OUTPUT_SYSTEM_PROMPT = `IMPORTANT: The user has requested structured output. You MUST use the StructuredOutput tool to provide your final response. Do NOT respond with plain text - you MUST call the StructuredOutput tool with your answer formatted according to the schema.`
+const OPENNODUS_ORCHESTRATOR_BLOCKED_TOOLS = ["edit", "write", "apply_patch", "patch"]
+const OPENNODUS_DELEGATION_ACTIVE = "Delegation policy active"
 
 const log = Log.create({ service: "session.prompt" })
 const elog = EffectLogger.create({ service: "session.prompt" })
@@ -1430,6 +1432,11 @@ export const layer = Layer.effect(
               MessageV2.toModelMessagesEffect(msgs, model),
             ])
             const system = [...env, ...opennodus, ...instructions, ...(skills ? [skills] : [])]
+            if (opennodus.some((item) => item.includes(OPENNODUS_DELEGATION_ACTIVE))) {
+              for (const blocked of OPENNODUS_ORCHESTRATOR_BLOCKED_TOOLS) {
+                delete tools[blocked]
+              }
+            }
             const format = lastUser.format ?? { type: "text" as const }
             if (format.type === "json_schema") system.push(STRUCTURED_OUTPUT_SYSTEM_PROMPT)
             const result = yield* handle.process({
