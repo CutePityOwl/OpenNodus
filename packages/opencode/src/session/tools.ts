@@ -59,7 +59,11 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
       .filter((item): item is Graph.Node => !!item && item.type === "agent")
 
   const connectedGraphAgents = isOrchestratorNode ? connectedAgents(graphContext.value.graph, graphContext.value.node) : []
-  const shouldDelegateWorkspaceChanges = connectedGraphAgents.length > 0
+  const graphAgents = Option.isSome(graphContext)
+    ? graphContext.value.graph.nodes.filter((node) => node.type === "agent")
+    : []
+  const delegateTargets = connectedGraphAgents.length > 0 ? connectedGraphAgents : graphAgents
+  const shouldDelegateWorkspaceChanges = isOrchestratorNode && delegateTargets.length > 0
 
   const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
     sessionID: input.session.id,
@@ -144,7 +148,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   }
 
   if (Option.isSome(graphContext) && graphContext.value.node.type === "orchestrator") {
-    const connected = connectedGraphAgents
+    const connected = delegateTargets
 
     if (connected.length > 0) {
       const describeConnected = connected
