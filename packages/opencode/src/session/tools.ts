@@ -364,7 +364,6 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                     agent: targetSession.agent ?? input.session.agent ?? input.agent.name,
                     model,
                     variant,
-                    system: target.instructions,
                     parts: [{ type: "text", text: call.prompt }],
                   })
 
