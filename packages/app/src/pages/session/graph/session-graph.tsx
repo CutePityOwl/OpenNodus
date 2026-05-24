@@ -41,6 +41,7 @@ type OpenNodusNodeData = {
   selected: boolean
   linkingSource: boolean
   permissionPending: boolean
+  delegating: boolean
   working: boolean
   onOpenSettings: (nodeID: string) => void
   onOpenContextMenu: (event: MouseEvent, nodeID: string) => void
@@ -79,6 +80,7 @@ function toFlowNode(
   selectedNodeID: string | undefined,
   linkingSourceNodeID: string | undefined,
   permissionPending: boolean,
+  delegating: boolean,
   working: boolean,
   onOpenSettings: OpenNodusNodeData["onOpenSettings"],
   onOpenContextMenu: OpenNodusNodeData["onOpenContextMenu"],
@@ -97,6 +99,7 @@ function toFlowNode(
       selected: selectedNodeID === node.id,
       linkingSource: linkingSourceNodeID === node.id,
       permissionPending,
+      delegating,
       working,
       onOpenSettings,
       onOpenContextMenu,
@@ -119,6 +122,7 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
   const selected = () => props.data.selected
   const linkingSource = () => props.data.linkingSource
   const permissionPending = () => props.data.permissionPending
+  const delegating = () => props.data.delegating
   const working = () => props.data.working
 
   const persistSize = (_event: unknown, params: ResizeParams) => {
@@ -134,9 +138,9 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
       classList={{
         "border-border-strong shadow-md": selected(),
         "border-icon-info-active shadow-md": linkingSource(),
-        "border-icon-warning-base shadow-md": permissionPending(),
-        "border-success-base shadow-md": working() && !selected() && !linkingSource() && !permissionPending(),
-        "border-border-base": !selected() && !linkingSource() && !permissionPending() && !working(),
+        "border-icon-warning-base shadow-md": permissionPending() || delegating(),
+        "border-success-base shadow-md": working() && !delegating() && !selected() && !linkingSource() && !permissionPending(),
+        "border-border-base": !selected() && !linkingSource() && !permissionPending() && !delegating() && !working(),
       }}
       onContextMenu={(event) => props.data.onOpenContextMenu(event, props.id)}
     >
@@ -186,8 +190,12 @@ function OpenNodusNode(props: NodeProps<OpenNodusNodeData, "opennodus">) {
           </Show>
           <Show when={working()}>
             <span
-              class="relative z-40 size-2 shrink-0 rounded-full bg-icon-success-base animate-pulse"
-              aria-label="Node running"
+              class="relative z-40 size-2 shrink-0 rounded-full animate-pulse"
+              classList={{
+                "bg-icon-warning-base": delegating(),
+                "bg-icon-success-base": !delegating(),
+              }}
+              aria-label={delegating() ? "Node waiting for agent" : "Node running"}
             />
           </Show>
           <div class="relative z-40 text-[10px] font-medium uppercase tracking-normal text-text-weak">{node().type}</div>
@@ -522,6 +530,22 @@ export function SessionGraph() {
     graph.openSettings(nodeID)
   }
 
+  const waitingOnGraphAgent = (chatSessionID: string | undefined) => {
+    if (!chatSessionID) return false
+    const messages = sync.data.message[chatSessionID] ?? []
+    const pending = messages.findLast(
+      (message) => message.role === "assistant" && typeof message.time.completed !== "number",
+    )
+    if (!pending) return false
+    const parts = sync.data.part[pending.id] ?? []
+    return parts.some(
+      (part) =>
+        part.type === "tool" &&
+        part.tool === "graph_agent" &&
+        (part.state.status === "pending" || part.state.status === "running"),
+    )
+  }
+
   createEffect(() => {
     const current = graph.current()
     if (!current) {
@@ -532,12 +556,14 @@ export function SessionGraph() {
 
     const nextNodes = current.nodes.map((node) => {
       const chatSessionID = node.currentChatSessionID
+      const delegating = node.type === "orchestrator" && waitingOnGraphAgent(chatSessionID)
       return toFlowNode(
         node,
         current.state.selectedNodeID,
         graph.linkingSourceNodeID,
         !!chatSessionID &&
           (sync.data.permission[chatSessionID] ?? []).some((item) => !permission.autoResponds(item, sdk.directory)),
+        delegating,
         !!chatSessionID && sync.data.session_working(chatSessionID),
         openNodeSettings,
         openNodeMenu,

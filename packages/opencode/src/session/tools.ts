@@ -47,6 +47,13 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   const snapshot = yield* Snapshot.Service
   const graphContext = yield* graph.findNodeByChatSessionID(input.session.id).pipe(Effect.option)
   const isOrchestratorNode = Option.isSome(graphContext) && graphContext.value.node.type === "orchestrator"
+  const connectedGraphAgents = isOrchestratorNode
+    ? graphContext.value.graph.edges
+        .filter((edge) => edge.sourceNodeID === graphContext.value.node.id)
+        .map((edge) => graphContext.value.graph.nodes.find((node) => node.id === edge.targetNodeID))
+        .filter((node): node is Graph.Node => !!node && node.type === "agent")
+    : []
+  const shouldDelegateWorkspaceChanges = connectedGraphAgents.length > 0
 
   const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
     sessionID: input.session.id,
@@ -86,7 +93,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     providerID: input.model.providerID,
     agent: input.agent,
   })) {
-    if (isOrchestratorNode && ORCHESTRATOR_BLOCKED_TOOLS.has(item.id)) continue
+    if (shouldDelegateWorkspaceChanges && ORCHESTRATOR_BLOCKED_TOOLS.has(item.id)) continue
 
     const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))
     tools[item.id] = tool({
@@ -127,11 +134,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   }
 
   if (Option.isSome(graphContext) && graphContext.value.node.type === "orchestrator") {
-    const source = graphContext.value.node
-    const connected = graphContext.value.graph.edges
-      .filter((edge) => edge.sourceNodeID === source.id)
-      .map((edge) => graphContext.value.graph.nodes.find((node) => node.id === edge.targetNodeID))
-      .filter((node): node is Graph.Node => !!node && node.type === "agent")
+    const connected = connectedGraphAgents
 
     if (connected.length > 0) {
       const describeConnected = connected
