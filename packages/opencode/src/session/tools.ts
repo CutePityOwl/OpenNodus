@@ -10,9 +10,11 @@ import { Truncate } from "@/tool/truncate"
 import { ModelID } from "@/provider/schema"
 import { Plugin } from "@/plugin"
 import { Graph } from "@/graph/graph"
+import { formatWorkspaceChanges } from "@/graph/workspace-changes"
+import { Snapshot } from "@/snapshot"
 import type { TaskPromptOps } from "@/tool/task"
 import { type Tool as AITool, tool, jsonSchema, type ToolExecutionOptions, asSchema } from "ai"
-import { Cause, Effect, Option } from "effect"
+import { Cause, Effect, Exit, Option } from "effect"
 import { MessageV2 } from "./message-v2"
 import * as Session from "./session"
 import { SessionProcessor } from "./processor"
@@ -41,6 +43,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   const truncate = yield* Truncate.Service
   const graph = yield* Graph.Service
   const sessions = yield* Session.Service
+  const snapshot = yield* Snapshot.Service
 
   const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
     sessionID: input.session.id,
@@ -210,6 +213,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 sessionID?: string
                 status: "completed" | "error"
                 output: string
+                workspaceChanges?: string
               }
 
               const normalizeCalls = () => {
@@ -267,8 +271,11 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                 return [
                   `<${tag} node="${result.target.name}" node_id="${result.target.id}">`,
                   result.output,
+                  result.workspaceChanges ? `\n${result.workspaceChanges}` : undefined,
                   `</${tag}>`,
-                ].join("\n")
+                ]
+                  .filter((line): line is string => !!line)
+                  .join("\n")
               }
 
               const current = yield* graph.findNodeByChatSessionID(ctx.sessionID)
@@ -313,6 +320,35 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
               const runCall = (call: PlannedGraphAgentCall) =>
                 Effect.gen(function* () {
                   const target = call.target
+                  const attribution = mode === "parallel" ? "best_effort_parallel" : "exact"
+                  const safeTrack = () =>
+                    snapshot.track().pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.sync(() => {
+                          log.warn("failed to capture graph_agent workspace snapshot", { cause: Cause.pretty(cause) })
+                          return undefined
+                        }),
+                      ),
+                    )
+                  const changesFrom = (before: string | undefined, after: string | undefined) =>
+                    Effect.gen(function* () {
+                      if (!before || !after) {
+                        return formatWorkspaceChanges({
+                          unavailableReason: "snapshot tracking disabled or unavailable",
+                          attribution,
+                        })
+                      }
+                      const diffExit = yield* snapshot.diffFull(before, after).pipe(Effect.exit)
+                      if (Exit.isFailure(diffExit)) {
+                        log.warn("failed to diff graph_agent workspace snapshots", { cause: Cause.pretty(diffExit.cause) })
+                        return formatWorkspaceChanges({
+                          unavailableReason: "snapshot diff unavailable",
+                          attribution,
+                        })
+                      }
+                      return formatWorkspaceChanges({ diffs: diffExit.value, attribution })
+                    })
+
                   yield* ctx.ask({
                     permission: "graph_agent",
                     patterns: [target.id],
@@ -358,20 +394,39 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                     targetSession.model?.variant ??
                     (!target.providerID || !target.modelID ? input.session.model?.variant : undefined)
 
-                  const result = yield* input.promptOps.prompt({
-                    messageID: MessageID.ascending(),
-                    sessionID: targetSessionID,
-                    agent: targetSession.agent ?? input.session.agent ?? input.agent.name,
-                    model,
-                    variant,
-                    parts: [{ type: "text", text: call.prompt }],
-                  })
+                  const before = yield* safeTrack()
+                  const resultExit = yield* input.promptOps
+                    .prompt({
+                      messageID: MessageID.ascending(),
+                      sessionID: targetSessionID,
+                      agent: targetSession.agent ?? input.session.agent ?? input.agent.name,
+                      model,
+                      variant,
+                      parts: [{ type: "text", text: call.prompt }],
+                    })
+                    .pipe(Effect.exit)
+                  const after = yield* safeTrack()
+                  const workspaceChanges = yield* changesFrom(before, after)
+
+                  if (Exit.isFailure(resultExit)) {
+                    const error = Cause.squash(resultExit.cause)
+                    return {
+                      target,
+                      sessionID: targetSessionID,
+                      status: "error" as const,
+                      output: error instanceof Error ? error.message : String(error),
+                      workspaceChanges,
+                    }
+                  }
+
+                  const result = resultExit.value
 
                   return {
                     target,
                     sessionID: targetSessionID,
                     status: "completed" as const,
                     output: result.parts.findLast((part) => part.type === "text")?.text ?? "",
+                    workspaceChanges,
                   }
                 }).pipe(
                   Effect.catchCause((cause) =>
@@ -381,6 +436,10 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                         target: call.target,
                         status: "error" as const,
                         output: error instanceof Error ? error.message : String(error),
+                        workspaceChanges: formatWorkspaceChanges({
+                          unavailableReason: "agent call failed before workspace snapshots were available",
+                          attribution: mode === "parallel" ? "best_effort_parallel" : "exact",
+                        }),
                       }
                     }),
                   ),

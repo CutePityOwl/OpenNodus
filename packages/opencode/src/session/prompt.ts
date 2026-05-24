@@ -63,6 +63,7 @@ import { SessionReminders } from "./reminders"
 import { SessionTools } from "./tools"
 import { LLMEvent } from "@opencode-ai/llm"
 import { Graph } from "@/graph/graph"
+import { Snapshot } from "@/snapshot"
 
 // @ts-ignore
 globalThis.AI_SDK_LOG_WARNINGS = false
@@ -1386,6 +1387,7 @@ export const layer = Layer.effect(
               Effect.provideService(Truncate.Service, truncate),
               Effect.provideService(Session.Service, sessions),
               Effect.provide(Graph.defaultLayer),
+              Effect.provide(Snapshot.defaultLayer),
             )
 
             if (lastUser.format?.type === "json_schema") {
