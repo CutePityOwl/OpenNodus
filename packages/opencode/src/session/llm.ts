@@ -1,5 +1,6 @@
 import { Provider } from "@/provider/provider"
 import * as Log from "@opencode-ai/core/util/log"
+import * as Global from "@opencode-ai/core/global"
 import { Context, Effect, Layer, Record } from "effect"
 import * as Stream from "effect/Stream"
 import { streamText, wrapLanguageModel, type ModelMessage, type Tool, tool as aiTool, jsonSchema } from "ai"
@@ -28,9 +29,12 @@ import * as Option from "effect/Option"
 import * as OtelTracer from "@effect/opentelemetry/Tracer"
 import { LLMAISDK } from "./llm/ai-sdk"
 import { LLMNativeRuntime } from "./llm/native-runtime"
+import path from "node:path"
+import fs from "node:fs/promises"
 
 const log = Log.create({ service: "llm" })
 export const OUTPUT_TOKEN_MAX = ProviderTransform.OUTPUT_TOKEN_MAX
+const OPENNODUS_LLM_DEBUG_DISABLED = "0"
 
 // Avoid re-instantiating remeda's deep merge types in this hot LLM path; the runtime behavior is still mergeDeep.
 const mergeOptions = (target: Record<string, any>, source: Record<string, any> | undefined): Record<string, any> =>
@@ -224,6 +228,22 @@ const live: Layer.Layer<
         })
       }
       const sortedTools = Object.fromEntries(Object.entries(tools).toSorted(([a], [b]) => a.localeCompare(b)))
+      yield* dumpOpenNodusLLMRequest({
+        sessionID: input.sessionID,
+        parentSessionID: input.parentSessionID,
+        userID: input.user.id,
+        agent: input.agent.name,
+        model: {
+          providerID: input.model.providerID,
+          id: input.model.id,
+          apiID: input.model.api.id,
+        },
+        inputToolNames: Object.keys(input.tools).sort(),
+        finalToolNames: Object.keys(sortedTools).sort(),
+        toolChoice: input.toolChoice,
+        system,
+        messages,
+      }).pipe(Effect.catch((error) => Effect.sync(() => l.warn("failed to write OpenNodus LLM debug dump", { error }))))
 
       // Wire up toolExecutor for DWS workflow models so that tool calls
       // from the workflow service are executed via opencode's tool system
@@ -517,6 +537,50 @@ function resolveTools(input: Pick<StreamInput, "tools" | "agent" | "permission" 
   )
   return Record.filter(input.tools, (_, k) => input.user.tools?.[k] !== false && !disabled.has(k))
 }
+
+const safeName = (value: string) => value.replace(/[^a-zA-Z0-9_.-]/g, "_").slice(0, 96)
+
+const dumpOpenNodusLLMRequest = Effect.fn("LLM.dumpOpenNodusLLMRequest")(function* (input: {
+  sessionID: string
+  parentSessionID?: string
+  userID: string
+  agent: string
+  model: {
+    providerID: string
+    id: string
+    apiID: string
+  }
+  inputToolNames: string[]
+  finalToolNames: string[]
+  toolChoice?: "auto" | "required" | "none"
+  system: string[]
+  messages: ModelMessage[]
+}) {
+  if (process.env.OPENNODUS_LLM_DEBUG === OPENNODUS_LLM_DEBUG_DISABLED) return
+
+  const dir = path.join(Global.Path.data, "opennodus-debug", "llm")
+  const file = path.join(
+    dir,
+    `${new Date().toISOString().replace(/:/g, "").replace(/\..+$/, "")}-${safeName(input.sessionID)}-${safeName(input.userID)}.json`,
+  )
+  yield* Effect.promise(async () => {
+    await fs.mkdir(dir, { recursive: true })
+    await fs.writeFile(
+      file,
+      JSON.stringify(
+        {
+          time: new Date().toISOString(),
+          ...input,
+          hasApplyPatch: input.finalToolNames.includes("apply_patch"),
+          hasGraphAgent: input.finalToolNames.includes("graph_agent"),
+          hasDelegationContext: input.system.some((item) => item.includes("Delegation policy active")),
+        },
+        null,
+        2,
+      ),
+    )
+  })
+})
 
 // Check if messages contain any tool-call content
 // Used to determine if a dummy tool should be added (GitHub Copilot only; see stream()).
