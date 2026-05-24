@@ -23,8 +23,8 @@ import * as Log from "@opencode-ai/core/util/log"
 import { EffectBridge } from "@/effect/bridge"
 
 const log = Log.create({ service: "session.tools" })
-const ORCHESTRATOR_BLOCKED_TOOLS = new Set(["edit", "write", "apply_patch", "bash"])
-const ORCHESTRATOR_BLOCKED_PERMISSIONS = new Set(["edit", "write", "apply_patch", "bash"])
+const ORCHESTRATOR_BLOCKED_TOOLS = new Set(["edit", "write", "apply_patch", "patch", "bash"])
+const ORCHESTRATOR_BLOCKED_PERMISSIONS = new Set(["edit", "write", "apply_patch", "patch", "bash"])
 const ORCHESTRATOR_DELEGATION_MESSAGE =
   "This Orchestrator has connected Agent nodes, so it cannot perform direct workspace changes. Delegate this work with graph_agent to a suitable connected Agent node."
 
@@ -155,6 +155,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
         description: [
           "Call one or more connected OpenNodus Agent nodes and return only the agents' final results.",
           "Use this for work that should be delegated through the graph rather than handled by this Orchestrator directly.",
+          "When delegating implementation or file changes, instruct the Agent to perform the workspace change itself. Do not ask the Agent to merely draft code for the Orchestrator to write or patch afterward.",
           "For multiple independent agents, pass calls with mode=parallel. For dependent work, pass calls with mode=sequential or call this tool again after reading the prior result.",
           "Connected agents:",
           describeConnected,
