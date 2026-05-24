@@ -64,6 +64,12 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     : []
   const delegateTargets = connectedGraphAgents.length > 0 ? connectedGraphAgents : graphAgents
   const shouldDelegateWorkspaceChanges = isOrchestratorNode && delegateTargets.length > 0
+  const enforceOrchestratorDelegation = () => {
+    if (!shouldDelegateWorkspaceChanges) return
+    for (const blocked of ORCHESTRATOR_BLOCKED_TOOLS) {
+      delete tools[blocked]
+    }
+  }
 
   const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
     sessionID: input.session.id,
@@ -584,6 +590,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     tools[key] = item
   }
 
+  enforceOrchestratorDelegation()
   return tools
 })
 
