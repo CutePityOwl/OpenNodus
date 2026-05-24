@@ -24,6 +24,9 @@ import { EffectBridge } from "@/effect/bridge"
 
 const log = Log.create({ service: "session.tools" })
 const ORCHESTRATOR_BLOCKED_TOOLS = new Set(["edit", "write", "apply_patch", "bash"])
+const ORCHESTRATOR_BLOCKED_PERMISSIONS = new Set(["edit", "write", "apply_patch", "bash"])
+const ORCHESTRATOR_DELEGATION_MESSAGE =
+  "This Orchestrator has connected Agent nodes, so it cannot perform direct workspace changes. Delegate this work with graph_agent to a suitable connected Agent node."
 
 export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   agent: Agent.Info
@@ -77,15 +80,19 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
           },
         }
       }),
-    ask: (req) =>
-      permission
+    ask: (req) => {
+      if (shouldDelegateWorkspaceChanges && ORCHESTRATOR_BLOCKED_PERMISSIONS.has(req.permission)) {
+        return Effect.die(new Error(ORCHESTRATOR_DELEGATION_MESSAGE))
+      }
+      return permission
         .ask({
           ...req,
           sessionID: input.session.id,
           tool: { messageID: input.processor.message.id, callID: options.toolCallId },
           ruleset: Permission.merge(input.agent.permission, input.session.permission ?? []),
         })
-        .pipe(Effect.orDie),
+        .pipe(Effect.orDie)
+    },
   })
 
   for (const item of yield* registry.tools({
