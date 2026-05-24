@@ -23,8 +23,8 @@ import * as Log from "@opencode-ai/core/util/log"
 import { EffectBridge } from "@/effect/bridge"
 
 const log = Log.create({ service: "session.tools" })
-const ORCHESTRATOR_BLOCKED_TOOLS = new Set(["edit", "write", "apply_patch", "patch", "bash"])
-const ORCHESTRATOR_BLOCKED_PERMISSIONS = new Set(["edit", "write", "apply_patch", "patch", "bash"])
+const ORCHESTRATOR_BLOCKED_TOOLS = new Set(["edit", "write", "apply_patch", "patch"])
+const ORCHESTRATOR_BLOCKED_PERMISSIONS = new Set(["edit", "write", "apply_patch", "patch"])
 const ORCHESTRATOR_DELEGATION_MESSAGE =
   "This Orchestrator has connected Agent nodes, so it cannot perform direct workspace changes. Delegate this work with graph_agent to a suitable connected Agent node."
 
@@ -50,12 +50,15 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   const snapshot = yield* Snapshot.Service
   const graphContext = yield* graph.findNodeByChatSessionID(input.session.id).pipe(Effect.option)
   const isOrchestratorNode = Option.isSome(graphContext) && graphContext.value.node.type === "orchestrator"
-  const connectedGraphAgents = isOrchestratorNode
-    ? graphContext.value.graph.edges
-        .filter((edge) => edge.sourceNodeID === graphContext.value.node.id)
-        .map((edge) => graphContext.value.graph.nodes.find((node) => node.id === edge.targetNodeID))
-        .filter((node): node is Graph.Node => !!node && node.type === "agent")
-    : []
+  const connectedAgents = (info: Graph.Info, node: Graph.Node) =>
+    info.edges
+      .filter((edge) => edge.sourceNodeID === node.id || edge.targetNodeID === node.id)
+      .map((edge) =>
+        info.nodes.find((item) => item.id === (edge.sourceNodeID === node.id ? edge.targetNodeID : edge.sourceNodeID)),
+      )
+      .filter((item): item is Graph.Node => !!item && item.type === "agent")
+
+  const connectedGraphAgents = isOrchestratorNode ? connectedAgents(graphContext.value.graph, graphContext.value.node) : []
   const shouldDelegateWorkspaceChanges = connectedGraphAgents.length > 0
 
   const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
@@ -299,10 +302,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
               }
 
               const fresh = yield* graph.get(current.node.graphSessionID)
-              const targets = fresh.edges
-                .filter((edge) => edge.sourceNodeID === current.node.id)
-                .map((edge) => fresh.nodes.find((node) => node.id === edge.targetNodeID))
-                .filter((node): node is Graph.Node => !!node && node.type === "agent")
+              const targets = connectedAgents(fresh, current.node)
 
               const calls = normalizeCalls()
               const mode =
@@ -449,6 +449,7 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                       const error = Cause.squash(cause)
                       return {
                         target: call.target,
+                        sessionID: undefined,
                         status: "error" as const,
                         output: error instanceof Error ? error.message : String(error),
                         workspaceChanges: formatWorkspaceChanges({

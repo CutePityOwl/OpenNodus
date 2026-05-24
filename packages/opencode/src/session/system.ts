@@ -96,23 +96,33 @@ export const layer = Layer.effect(
 
     const connectedAgents = (info: GraphInfo, source: GraphNode) =>
       info.edges
-        .filter((edge) => edge.sourceNodeID === source.id)
-        .map((edge) => info.nodes.find((node) => node.id === edge.targetNodeID))
+        .filter((edge) => edge.sourceNodeID === source.id || edge.targetNodeID === source.id)
+        .map((edge) =>
+          info.nodes.find((node) => node.id === (edge.sourceNodeID === source.id ? edge.targetNodeID : edge.sourceNodeID)),
+        )
         .filter((node): node is GraphNode => !!node && node.type === "agent")
 
     const connectedOrchestrators = (info: GraphInfo, target: GraphNode) =>
       info.edges
-        .filter((edge) => edge.targetNodeID === target.id)
-        .map((edge) => info.nodes.find((node) => node.id === edge.sourceNodeID))
+        .filter((edge) => edge.sourceNodeID === target.id || edge.targetNodeID === target.id)
+        .map((edge) =>
+          info.nodes.find((node) => node.id === (edge.sourceNodeID === target.id ? edge.targetNodeID : edge.sourceNodeID)),
+        )
         .filter((node): node is GraphNode => !!node && node.type === "orchestrator")
 
     const siblingAgents = (info: GraphInfo, target: GraphNode) => {
       const orchestratorIDs = new Set(connectedOrchestrators(info, target).map((node) => node.id))
       const siblings = new Map<string, GraphNode>()
       for (const edge of info.edges) {
-        if (!orchestratorIDs.has(edge.sourceNodeID)) continue
-        if (edge.targetNodeID === target.id) continue
-        const node = info.nodes.find((item) => item.id === edge.targetNodeID)
+        const orchestratorID = orchestratorIDs.has(edge.sourceNodeID)
+          ? edge.sourceNodeID
+          : orchestratorIDs.has(edge.targetNodeID)
+            ? edge.targetNodeID
+            : undefined
+        if (!orchestratorID) continue
+        const siblingID = edge.sourceNodeID === orchestratorID ? edge.targetNodeID : edge.sourceNodeID
+        if (siblingID === target.id) continue
+        const node = info.nodes.find((item) => item.id === siblingID)
         if (node?.type === "agent") siblings.set(node.id, node)
       }
       return Array.from(siblings.values())

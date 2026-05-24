@@ -294,6 +294,19 @@ export const layer = Layer.effect(
           d.select().from(GraphNodeTable).where(eq(GraphNodeTable.current_chat_session_id, chatSessionID)).get(),
         )
         if (!row) {
+          const graphState = yield* db((d) =>
+            d.select().from(GraphStateTable).where(eq(GraphStateTable.graph_session_id, chatSessionID)).get(),
+          )
+          if (graphState) {
+            const graph = yield* get(SessionID.make(graphState.graph_session_id))
+            const node =
+              graph.nodes.find((item) => item.type === "orchestrator" && item.currentChatSessionID === chatSessionID) ??
+              graph.nodes.find((item) => item.type === "orchestrator" && !item.currentChatSessionID) ??
+              graph.nodes.find((item) => item.type === "orchestrator")
+            if (node) return { graph, node }
+          }
+        }
+        if (!row) {
           return yield* Effect.fail(
             new NotFoundError({ message: `Graph node not found for session: ${chatSessionID}` }),
           )
