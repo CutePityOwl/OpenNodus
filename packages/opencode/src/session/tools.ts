@@ -23,6 +23,7 @@ import * as Log from "@opencode-ai/core/util/log"
 import { EffectBridge } from "@/effect/bridge"
 
 const log = Log.create({ service: "session.tools" })
+const ORCHESTRATOR_BLOCKED_TOOLS = new Set(["edit", "write", "apply_patch", "bash"])
 
 export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   agent: Agent.Info
@@ -44,6 +45,8 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
   const graph = yield* Graph.Service
   const sessions = yield* Session.Service
   const snapshot = yield* Snapshot.Service
+  const graphContext = yield* graph.findNodeByChatSessionID(input.session.id).pipe(Effect.option)
+  const isOrchestratorNode = Option.isSome(graphContext) && graphContext.value.node.type === "orchestrator"
 
   const context = (args: Record<string, unknown>, options: ToolExecutionOptions): Tool.Context => ({
     sessionID: input.session.id,
@@ -83,6 +86,8 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     providerID: input.model.providerID,
     agent: input.agent,
   })) {
+    if (isOrchestratorNode && ORCHESTRATOR_BLOCKED_TOOLS.has(item.id)) continue
+
     const schema = ProviderTransform.schema(input.model, ToolJsonSchema.fromTool(item))
     tools[item.id] = tool({
       description: item.description,
@@ -121,7 +126,6 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     })
   }
 
-  const graphContext = yield* graph.findNodeByChatSessionID(input.session.id).pipe(Effect.option)
   if (Option.isSome(graphContext) && graphContext.value.node.type === "orchestrator") {
     const source = graphContext.value.node
     const connected = graphContext.value.graph.edges
