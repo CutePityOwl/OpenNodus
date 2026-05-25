@@ -19,6 +19,8 @@ import { Installation } from "../installation"
 import { InstallationVersion } from "@opencode-ai/core/installation/version"
 import { withTimeout } from "@/util/timeout"
 import { AppFileSystem } from "@opencode-ai/core/filesystem"
+import { Global } from "@opencode-ai/core/global"
+import { Hash } from "@opencode-ai/core/util/hash"
 import { McpOAuthProvider } from "./oauth-provider"
 import { McpOAuthCallback } from "./oauth-callback"
 import { McpAuth } from "./auth"
@@ -31,9 +33,11 @@ import { EffectBridge } from "@/effect/bridge"
 import { InstanceState } from "@/effect/instance-state"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import { CrossSpawnSpawner } from "@opencode-ai/core/cross-spawn-spawner"
+import path from "path"
 
 const log = Log.create({ service: "mcp" })
 const DEFAULT_TIMEOUT = 30_000
+const DEFAULT_QUEUE_TIMEOUT = 300_000
 
 const TolerantListToolsResultSchema = ListToolsResultSchema.extend({
   tools: ToolSchema.omit({ outputSchema: true }).array(),
@@ -150,8 +154,15 @@ function listTools(key: string, client: MCPClient, timeout: number) {
   )
 }
 
+type ExecuteMcpTool = (input: {
+  args: unknown
+  toolCallID?: string
+  abort?: AbortSignal
+  execute: () => Promise<unknown>
+}) => Promise<unknown>
+
 // Convert MCP tool definition to AI SDK Tool type
-function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number): Tool {
+function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number, executeTool?: ExecuteMcpTool): Tool {
   const inputSchema = mcpTool.inputSchema
 
   // Spread first, then override type to ensure it's always "object"
@@ -165,19 +176,78 @@ function convertMcpTool(mcpTool: MCPToolDef, client: MCPClient, timeout?: number
   return dynamicTool({
     description: mcpTool.description ?? "",
     inputSchema: jsonSchema(schema),
-    execute: async (args: unknown) => {
-      return client.callTool(
-        {
-          name: mcpTool.name,
-          arguments: (args || {}) as Record<string, unknown>,
-        },
-        CallToolResultSchema,
-        {
-          resetTimeoutOnProgress: true,
-          timeout,
-        },
-      )
+    execute: async (args: unknown, options) => {
+      const execute = () =>
+        client.callTool(
+          {
+            name: mcpTool.name,
+            arguments: (args || {}) as Record<string, unknown>,
+          },
+          CallToolResultSchema,
+          {
+            resetTimeoutOnProgress: true,
+            timeout,
+          },
+        )
+
+      return executeTool
+        ? executeTool({
+            args,
+            toolCallID: options.toolCallId,
+            abort: options.abortSignal,
+            execute,
+          })
+        : execute()
     },
+  })
+}
+
+function makeAbortError(message: string) {
+  return new Error(message)
+}
+
+function waitForQueueTurn(input: {
+  serverName: string
+  previous: Promise<void>
+  abort?: AbortSignal
+  timeout?: number
+}) {
+  return new Promise<void>((resolve, reject) => {
+    if (input.abort?.aborted) {
+      reject(makeAbortError(`MCP server "${input.serverName}" queue wait was aborted.`))
+      return
+    }
+
+    let done = false
+    const cleanup = () => {
+      done = true
+      if (input.abort) input.abort.removeEventListener("abort", onAbort)
+      clearTimeout(timeoutID)
+    }
+    const onAbort = () => {
+      if (done) return
+      cleanup()
+      reject(makeAbortError(`MCP server "${input.serverName}" queue wait was aborted.`))
+    }
+    const timeoutID = setTimeout(() => {
+      if (done) return
+      cleanup()
+      reject(makeAbortError(`Timed out waiting for MCP server "${input.serverName}" to become available.`))
+    }, input.timeout ?? DEFAULT_QUEUE_TIMEOUT)
+
+    input.abort?.addEventListener("abort", onAbort, { once: true })
+    input.previous.then(
+      () => {
+        if (done) return
+        cleanup()
+        resolve()
+      },
+      () => {
+        if (done) return
+        cleanup()
+        resolve()
+      },
+    )
   })
 }
 
@@ -227,18 +297,119 @@ interface AuthResult {
   client?: MCPClient
 }
 
+type RuntimeScope =
+  | { type: "shared" }
+  | { type: "node"; graphSessionID: string; nodeID: string }
+  | { type: "call"; graphSessionID: string; nodeID: string; callID: string }
+
+type RuntimeKey = string
+
+export interface ToolsContext {
+  graphSessionID?: string
+  nodeID?: string
+  nodeType?: "orchestrator" | "agent"
+  callID?: string
+}
+
+interface RuntimeInstance {
+  key: RuntimeKey
+  serverName: string
+  scope: RuntimeScope
+  status: Status
+  config?: ConfigMCP.Info
+  client?: MCPClient
+  defs?: MCPToolDef[]
+  createdAt: number
+  lastUsed: number
+  runtimeDir?: string
+}
+
+type RuntimeToolEntry = {
+  runtime: RuntimeInstance
+  mcpConfig: ConfigMCP.Info | undefined
+}
+
+interface RuntimePaths {
+  runtimeDir: string
+  tmpDir: string
+  cacheDir: string
+  configDir: string
+  dataDir: string
+  artifactsDir: string
+  profileDir: string
+  logsDir: string
+}
+
+const runtimePaths = (runtimeDir: string): RuntimePaths => ({
+  runtimeDir,
+  tmpDir: path.join(runtimeDir, "tmp"),
+  cacheDir: path.join(runtimeDir, "cache"),
+  configDir: path.join(runtimeDir, "config"),
+  dataDir: path.join(runtimeDir, "data"),
+  artifactsDir: path.join(runtimeDir, "artifacts"),
+  profileDir: path.join(runtimeDir, "profile"),
+  logsDir: path.join(runtimeDir, "logs"),
+})
+
+const replacePlaceholders = (value: string, replacements: Record<string, string | undefined>) =>
+  value.replace(/\{([^}]+)\}/g, (match, key) => replacements[key] ?? match)
+
+export function sharedRuntimeKey(serverName: string): RuntimeKey {
+  return serverName
+}
+
+export function nodeRuntimeKey(input: { serverName: string; graphSessionID: string; nodeID: string }): RuntimeKey {
+  return [
+    input.serverName,
+    `graph_session=${encodeURIComponent(input.graphSessionID)}`,
+    `node=${encodeURIComponent(input.nodeID)}`,
+  ].join("::")
+}
+
+export function callRuntimeKey(input: {
+  serverName: string
+  graphSessionID: string
+  nodeID: string
+  callID: string
+}): RuntimeKey {
+  return [
+    nodeRuntimeKey(input),
+    `call=${encodeURIComponent(input.callID)}`,
+  ].join("::")
+}
+
+export function runtimeDirectory(input: {
+  root: string
+  workspaceHash: string
+  graphSessionID: string
+  nodeID: string
+  serverName: string
+  callID?: string
+}): string {
+  const parts = [
+    input.root,
+    "mcp-runtimes",
+    sanitize(input.workspaceHash),
+    sanitize(input.graphSessionID),
+    sanitize(input.nodeID),
+    sanitize(input.serverName),
+  ]
+  if (input.callID) parts.push("calls", sanitize(input.callID))
+  return path.join(...parts)
+}
+
 // --- Effect Service ---
 
 interface State {
-  status: Record<string, Status>
-  clients: Record<string, MCPClient>
-  defs: Record<string, MCPToolDef[]>
+  runtimes: Record<RuntimeKey, RuntimeInstance>
 }
 
 export interface Interface {
   readonly status: () => Effect.Effect<Record<string, Status>>
   readonly clients: () => Effect.Effect<Record<string, MCPClient>>
   readonly tools: () => Effect.Effect<Record<string, Tool>>
+  readonly toolsForContext: (context: ToolsContext) => Effect.Effect<Record<string, Tool>>
+  readonly exclusiveServers: () => Effect.Effect<string[]>
   readonly prompts: () => Effect.Effect<Record<string, PromptInfo & { client: string }>>
   readonly resources: () => Effect.Effect<Record<string, ResourceInfo & { client: string }>>
   readonly add: (name: string, mcp: ConfigMCP.Info) => Effect.Effect<{ status: Record<string, Status> | Status }>
@@ -270,6 +441,8 @@ export const layer = Layer.effect(
     const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
     const auth = yield* McpAuth.Service
     const bus = yield* Bus.Service
+    const appFs = yield* AppFileSystem.Service
+    const sharedSerialQueues = new Map<string, Promise<void>>()
 
     type Transport = StdioClientTransport | StreamableHTTPClientTransport | SSEClientTransport
 
@@ -412,8 +585,15 @@ export const layer = Layer.effect(
     const connectLocal = Effect.fn("MCP.connectLocal")(function* (
       key: string,
       mcp: ConfigMCP.Info & { type: "local" },
+      options?: {
+        command?: string[]
+        environment?: Record<string, string>
+        runtimeKey?: RuntimeKey
+        runtimeDir?: string
+      },
     ) {
-      const [cmd, ...args] = mcp.command
+      const command = options?.command ?? mcp.command
+      const [cmd, ...args] = command
       const cwd = yield* InstanceState.directory
       const transport = new StdioClientTransport({
         stderr: "pipe",
@@ -424,10 +604,11 @@ export const layer = Layer.effect(
           ...process.env,
           ...(cmd === "opencode" ? { BUN_BE_BUN: "1" } : {}),
           ...mcp.environment,
+          ...options?.environment,
         },
       })
       transport.stderr?.on("data", (chunk: Buffer) => {
-        log.info(`mcp stderr: ${chunk.toString()}`, { key })
+        log.info(`mcp stderr: ${chunk.toString()}`, { key, runtimeKey: options?.runtimeKey })
       })
 
       const connectTimeout = mcp.timeout ?? DEFAULT_TIMEOUT
@@ -438,7 +619,14 @@ export const layer = Layer.effect(
         })),
         Effect.catch((error): Effect.Effect<{ client: MCPClient | undefined; status: Status }> => {
           const msg = error instanceof Error ? error.message : String(error)
-          log.error("local mcp startup failed", { key, command: mcp.command, cwd, error: msg })
+          log.error("local mcp startup failed", {
+            key,
+            command,
+            cwd,
+            runtimeKey: options?.runtimeKey,
+            runtimeDir: options?.runtimeDir,
+            error: msg,
+          })
           return Effect.succeed({ client: undefined, status: { status: "failed", error: msg } })
         }),
       )
@@ -496,17 +684,318 @@ export const layer = Layer.effect(
       Effect.catch(() => Effect.succeed([] as number[])),
     )
 
-    function watch(s: State, name: string, client: MCPClient, bridge: EffectBridge.Shape, timeout?: number) {
+    function sharedRuntime(s: State, serverName: string) {
+      return s.runtimes[sharedRuntimeKey(serverName)]
+    }
+
+    function placeholders(input: {
+      paths: RuntimePaths
+      context: ToolsContext
+      serverName: string
+      workspaceHash: string
+      port?: string
+    }) {
+      return {
+        runtimeDir: input.paths.runtimeDir,
+        tmpDir: input.paths.tmpDir,
+        cacheDir: input.paths.cacheDir,
+        configDir: input.paths.configDir,
+        dataDir: input.paths.dataDir,
+        artifactsDir: input.paths.artifactsDir,
+        profileDir: input.paths.profileDir,
+        logsDir: input.paths.logsDir,
+        graphSessionID: input.context.graphSessionID,
+        nodeID: input.context.nodeID,
+        callID: input.context.callID,
+        serverName: input.serverName,
+        workspaceHash: input.workspaceHash,
+        port: input.port,
+        opennodus_runtime_dir: input.paths.runtimeDir,
+        opennodus_tmp_dir: input.paths.tmpDir,
+        opennodus_cache_dir: input.paths.cacheDir,
+        opennodus_config_dir: input.paths.configDir,
+        opennodus_data_dir: input.paths.dataDir,
+        opennodus_artifacts_dir: input.paths.artifactsDir,
+        opennodus_profile_dir: input.paths.profileDir,
+        opennodus_logs_dir: input.paths.logsDir,
+        opennodus_graph_session_id: input.context.graphSessionID,
+        opennodus_node_id: input.context.nodeID,
+        opennodus_call_id: input.context.callID,
+        opennodus_server_name: input.serverName,
+        opennodus_workspace_hash: input.workspaceHash,
+        opennodus_port: input.port,
+      }
+    }
+
+    const ensureRuntimeDirs = Effect.fn("MCP.ensureRuntimeDirs")(function* (paths: RuntimePaths) {
+      yield* Effect.forEach(
+        [
+          paths.runtimeDir,
+          paths.tmpDir,
+          paths.cacheDir,
+          paths.configDir,
+          paths.dataDir,
+          paths.artifactsDir,
+          paths.profileDir,
+          paths.logsDir,
+        ],
+        (dir) => appFs.ensureDir(dir),
+        { concurrency: "unbounded" },
+      )
+    })
+
+    const createIsolatedLocalRuntime = Effect.fn("MCP.createIsolatedLocalRuntime")(function* (
+      s: State,
+      serverName: string,
+      mcp: ConfigMCP.Info & { type: "local" },
+      context: ToolsContext,
+      bridge: EffectBridge.Shape,
+    ) {
+      if (!context.graphSessionID || !context.nodeID) return undefined
+
+      const runtimeKey = nodeRuntimeKey({
+        serverName,
+        graphSessionID: context.graphSessionID,
+        nodeID: context.nodeID,
+      })
+      const existing = s.runtimes[runtimeKey]
+      if (existing?.status.status === "connected" && existing.client) {
+        existing.lastUsed = Date.now()
+        return existing
+      }
+
+      const workspace = yield* InstanceState.directory
+      const workspaceHash = Hash.fast(workspace)
+      const baseRuntimeDir = runtimeDirectory({
+        root: Global.Path.data,
+        workspaceHash,
+        graphSessionID: context.graphSessionID,
+        nodeID: context.nodeID,
+        serverName,
+      })
+      const templateRuntimeDir = mcp.isolation?.runtimeDir
+        ? replacePlaceholders(mcp.isolation.runtimeDir, {
+            graphSessionID: context.graphSessionID,
+            nodeID: context.nodeID,
+            callID: context.callID,
+            serverName,
+            workspaceHash,
+            opennodus_graph_session_id: context.graphSessionID,
+            opennodus_node_id: context.nodeID,
+            opennodus_call_id: context.callID,
+            opennodus_server_name: serverName,
+            opennodus_workspace_hash: workspaceHash,
+          })
+        : baseRuntimeDir
+      const runtimeDir = path.isAbsolute(templateRuntimeDir)
+        ? templateRuntimeDir
+        : path.join(Global.Path.data, templateRuntimeDir)
+      const paths = runtimePaths(runtimeDir)
+      yield* ensureRuntimeDirs(paths).pipe(Effect.orDie)
+
+      const replacements = placeholders({ paths, context, serverName, workspaceHash })
+      const command = (mcp.isolation?.commandTemplate ?? mcp.command).map((item) =>
+        replacePlaceholders(item, replacements),
+      )
+      const runtimeEnv: Record<string, string> = {
+        OPENNODUS_MCP_RUNTIME_DIR: paths.runtimeDir,
+        OPENNODUS_MCP_ARTIFACTS_DIR: paths.artifactsDir,
+        OPENNODUS_MCP_PROFILE_DIR: paths.profileDir,
+        OPENNODUS_MCP_CACHE_DIR: paths.cacheDir,
+        OPENNODUS_MCP_TMP_DIR: paths.tmpDir,
+        OPENNODUS_GRAPH_SESSION_ID: context.graphSessionID,
+        OPENNODUS_GRAPH_NODE_ID: context.nodeID,
+        OPENNODUS_MCP_SERVER_NAME: serverName,
+        TMP: paths.tmpDir,
+        TEMP: paths.tmpDir,
+        TMPDIR: paths.tmpDir,
+        XDG_CACHE_HOME: paths.cacheDir,
+        XDG_CONFIG_HOME: paths.configDir,
+        XDG_DATA_HOME: paths.dataDir,
+      }
+      if (context.callID) runtimeEnv.OPENNODUS_MCP_CALL_ID = context.callID
+
+      const environmentTemplate = Object.fromEntries(
+        Object.entries(mcp.isolation?.environmentTemplate ?? {}).map(([key, value]) => [
+          key,
+          replacePlaceholders(value, replacements),
+        ]),
+      )
+      const result = yield* connectLocal(serverName, mcp, {
+        command,
+        environment: {
+          ...runtimeEnv,
+          ...environmentTemplate,
+        },
+        runtimeKey,
+        runtimeDir: paths.runtimeDir,
+      })
+
+      const now = Date.now()
+      const runtime: RuntimeInstance = {
+        key: runtimeKey,
+        serverName,
+        scope: { type: "node", graphSessionID: context.graphSessionID, nodeID: context.nodeID },
+        status: result.status,
+        config: mcp,
+        client: result.client,
+        createdAt: existing?.createdAt ?? now,
+        lastUsed: now,
+        runtimeDir: paths.runtimeDir,
+      }
+
+      if (result.client) {
+        const listed = yield* defs(serverName, result.client, mcp.timeout)
+        if (!listed) {
+          yield* Effect.tryPromise(() => result.client?.close() ?? Promise.resolve()).pipe(Effect.ignore)
+          runtime.status = { status: "failed", error: "Failed to get tools" }
+          delete runtime.client
+        } else {
+          runtime.defs = listed
+          watch(s, runtimeKey, serverName, result.client, bridge, mcp.timeout)
+        }
+      }
+
+      s.runtimes[runtimeKey] = runtime
+      return runtime
+    })
+
+    const runtimeForContext = Effect.fn("MCP.runtimeForContext")(function* (
+      s: State,
+      serverName: string,
+      mcp: ConfigMCP.Info | undefined,
+      context: ToolsContext,
+      bridge: EffectBridge.Shape,
+    ) {
+      const shared = sharedRuntime(s, serverName)
+      if (!mcp || !context.graphSessionID || !context.nodeID) return shared
+
+      const mode = ConfigMCP.effectiveIsolationMode(mcp)
+      if ((mode === "isolated_per_node" || mode === "isolated_per_call") && mcp.type === "local") {
+        const runtime = yield* createIsolatedLocalRuntime(s, serverName, mcp, context, bridge)
+        if (runtime?.client) return runtime
+      }
+
+      if (mode === "isolated_per_node" || mode === "isolated_per_call") {
+        const scoped = s.runtimes[
+          nodeRuntimeKey({
+            serverName,
+            graphSessionID: context.graphSessionID,
+            nodeID: context.nodeID,
+          })
+        ]
+        return scoped?.client ? scoped : shared
+      }
+
+      return shared
+    })
+
+    function connectedSharedRuntimes(s: State) {
+      return Object.values(s.runtimes).filter(
+        (runtime) => runtime.scope.type === "shared" && runtime.status.status === "connected" && runtime.client,
+      )
+    }
+
+    function clientsFromSharedRuntimes(s: State) {
+      return Object.fromEntries(
+        connectedSharedRuntimes(s).map((runtime) => [runtime.serverName, runtime.client!]),
+      ) as Record<string, MCPClient>
+    }
+
+    function statusMapFromSharedRuntimes(s: State) {
+      return Object.fromEntries(
+        Object.values(s.runtimes)
+          .filter((runtime) => runtime.scope.type === "shared")
+          .map((runtime) => [runtime.serverName, runtime.status]),
+      ) as Record<string, Status>
+    }
+
+    function setRuntimeStatus(s: State, serverName: string, status: Status, config?: ConfigMCP.Info) {
+      const key = sharedRuntimeKey(serverName)
+      const now = Date.now()
+      const existing = s.runtimes[key]
+      s.runtimes[key] = {
+        key,
+        serverName,
+        scope: { type: "shared" },
+        status,
+        config: config ?? existing?.config,
+        createdAt: existing?.createdAt ?? now,
+        lastUsed: now,
+      }
+    }
+
+    async function runSharedSerial(input: {
+      serverName: string
+      runtimeKey: RuntimeKey
+      toolName: string
+      context: ToolsContext
+      abort?: AbortSignal
+      timeout?: number
+      execute: () => Promise<unknown>
+    }) {
+      const queued = sharedSerialQueues.has(input.serverName)
+      const previous = sharedSerialQueues.get(input.serverName) ?? Promise.resolve()
+      let release: (() => void) | undefined
+      const current = previous
+        .catch(() => {})
+        .then(
+          () =>
+            new Promise<void>((resolve) => {
+              release = resolve
+            }),
+        )
+      sharedSerialQueues.set(
+        input.serverName,
+        current.finally(() => {
+          if (sharedSerialQueues.get(input.serverName) === current) sharedSerialQueues.delete(input.serverName)
+        }),
+      )
+
+      if (queued) {
+        log.debug("mcp shared-serial queued", {
+          serverName: input.serverName,
+          runtimeKey: input.runtimeKey,
+          toolName: input.toolName,
+          graphSessionID: input.context.graphSessionID,
+          nodeID: input.context.nodeID,
+        })
+      }
+
+      try {
+        await waitForQueueTurn({
+          serverName: input.serverName,
+          previous,
+          abort: input.abort,
+          timeout: input.timeout ?? DEFAULT_QUEUE_TIMEOUT,
+        })
+        if (input.abort?.aborted) throw makeAbortError(`MCP server "${input.serverName}" tool call was aborted.`)
+        return await input.execute()
+      } finally {
+        release?.()
+      }
+    }
+
+    function watch(
+      s: State,
+      runtimeKey: RuntimeKey,
+      serverName: string,
+      client: MCPClient,
+      bridge: EffectBridge.Shape,
+      timeout?: number,
+    ) {
       client.setNotificationHandler(ToolListChangedNotificationSchema, async () => {
-        log.info("tools list changed notification received", { server: name })
-        if (s.clients[name] !== client || s.status[name]?.status !== "connected") return
+        log.info("tools list changed notification received", { server: serverName, runtimeKey })
+        const runtime = s.runtimes[runtimeKey]
+        if (runtime?.client !== client || runtime.status.status !== "connected") return
 
-        const listed = await bridge.promise(defs(name, client, timeout))
+        const listed = await bridge.promise(defs(serverName, client, timeout))
         if (!listed) return
-        if (s.clients[name] !== client || s.status[name]?.status !== "connected") return
+        if (s.runtimes[runtimeKey]?.client !== client || s.runtimes[runtimeKey]?.status.status !== "connected") return
 
-        s.defs[name] = listed
-        await bridge.promise(bus.publish(ToolsChanged, { server: name }).pipe(Effect.ignore))
+        s.runtimes[runtimeKey].defs = listed
+        s.runtimes[runtimeKey].lastUsed = Date.now()
+        await bridge.promise(bus.publish(ToolsChanged, { server: serverName }).pipe(Effect.ignore))
       })
     }
 
@@ -516,9 +1005,7 @@ export const layer = Layer.effect(
         const bridge = yield* EffectBridge.make()
         const config = cfg.mcp ?? {}
         const s: State = {
-          status: {},
-          clients: {},
-          defs: {},
+          runtimes: {},
         }
 
         yield* Effect.forEach(
@@ -531,18 +1018,22 @@ export const layer = Layer.effect(
               }
 
               if (mcp.enabled === false) {
-                s.status[key] = { status: "disabled" }
+                setRuntimeStatus(s, key, { status: "disabled" }, mcp)
                 return
               }
 
               const result = yield* create(key, mcp).pipe(Effect.catch(() => Effect.void))
               if (!result) return
 
-              s.status[key] = result.status
+              setRuntimeStatus(s, key, result.status, mcp)
               if (result.mcpClient) {
-                s.clients[key] = result.mcpClient
-                s.defs[key] = result.defs!
-                watch(s, key, result.mcpClient, bridge, mcp.timeout)
+                const runtimeKey = sharedRuntimeKey(key)
+                const runtime = s.runtimes[runtimeKey]
+                runtime.config = mcp
+                runtime.client = result.mcpClient
+                runtime.defs = result.defs!
+                runtime.lastUsed = Date.now()
+                watch(s, runtimeKey, key, result.mcpClient, bridge, mcp.timeout)
               }
             }),
           { concurrency: "unbounded" },
@@ -551,9 +1042,11 @@ export const layer = Layer.effect(
         yield* Effect.addFinalizer(() =>
           Effect.gen(function* () {
             yield* Effect.forEach(
-              Object.values(s.clients),
-              (client) =>
+              Object.values(s.runtimes),
+              (runtime) =>
                 Effect.gen(function* () {
+                  const client = runtime.client
+                  if (!client) return
                   const pid = client.transport instanceof StdioClientTransport ? client.transport.pid : null
                   if (typeof pid === "number") {
                     const pids = yield* descendants(pid)
@@ -576,8 +1069,13 @@ export const layer = Layer.effect(
     )
 
     function closeClient(s: State, name: string) {
-      const client = s.clients[name]
-      delete s.defs[name]
+      const runtime = sharedRuntime(s, name)
+      const client = runtime?.client
+      if (runtime) {
+        delete runtime.client
+        delete runtime.defs
+        runtime.lastUsed = Date.now()
+      }
       if (!client) return Effect.void
       return Effect.tryPromise(() => client.close()).pipe(Effect.ignore)
     }
@@ -588,14 +1086,25 @@ export const layer = Layer.effect(
       client: MCPClient,
       listed: MCPToolDef[],
       timeout?: number,
+      config?: ConfigMCP.Info,
     ) {
       const bridge = yield* EffectBridge.make()
       yield* closeClient(s, name)
-      s.status[name] = { status: "connected" }
-      s.clients[name] = client
-      s.defs[name] = listed
-      watch(s, name, client, bridge, timeout)
-      return s.status[name]
+      const runtimeKey = sharedRuntimeKey(name)
+      const now = Date.now()
+      s.runtimes[runtimeKey] = {
+        key: runtimeKey,
+        serverName: name,
+        scope: { type: "shared" },
+        status: { status: "connected" },
+        config: config ?? s.runtimes[runtimeKey]?.config,
+        client,
+        defs: listed,
+        createdAt: s.runtimes[runtimeKey]?.createdAt ?? now,
+        lastUsed: now,
+      }
+      watch(s, runtimeKey, name, client, bridge, timeout)
+      return s.runtimes[runtimeKey].status
     })
 
     const status = Effect.fn("MCP.status")(function* () {
@@ -607,7 +1116,7 @@ export const layer = Layer.effect(
 
       for (const [key, mcp] of Object.entries(config)) {
         if (!isMcpConfigured(mcp)) continue
-        result[key] = s.status[key] ?? { status: "disabled" }
+        result[key] = sharedRuntime(s, key)?.status ?? { status: "disabled" }
       }
 
       return result
@@ -615,27 +1124,38 @@ export const layer = Layer.effect(
 
     const clients = Effect.fn("MCP.clients")(function* () {
       const s = yield* InstanceState.get(state)
-      return s.clients
+      return clientsFromSharedRuntimes(s)
+    })
+
+    const exclusiveServers = Effect.fn("MCP.exclusiveServers")(function* () {
+      const cfg = yield* cfgSvc.get()
+      const servers: string[] = []
+      for (const [name, mcpConfig] of Object.entries(cfg.mcp ?? {})) {
+        if (!isMcpConfigured(mcpConfig)) continue
+        if (mcpConfig.enabled === false) continue
+        if (ConfigMCP.effectiveIsolationMode(mcpConfig) !== "exclusive") continue
+        servers.push(name)
+      }
+      return servers
     })
 
     const createAndStore = Effect.fn("MCP.createAndStore")(function* (name: string, mcp: ConfigMCP.Info) {
       const s = yield* InstanceState.get(state)
       const result = yield* create(name, mcp)
 
-      s.status[name] = result.status
       if (!result.mcpClient) {
         yield* closeClient(s, name)
-        delete s.clients[name]
+        setRuntimeStatus(s, name, result.status, mcp)
         return result.status
       }
 
-      return yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout)
+      return yield* storeClient(s, name, result.mcpClient, result.defs!, mcp.timeout, mcp)
     })
 
     const add = Effect.fn("MCP.add")(function* (name: string, mcp: ConfigMCP.Info) {
       yield* createAndStore(name, mcp)
       const s = yield* InstanceState.get(state)
-      return { status: s.status }
+      return { status: statusMapFromSharedRuntimes(s) }
     })
 
     const connect = Effect.fn("MCP.connect")(function* (name: string) {
@@ -650,11 +1170,10 @@ export const layer = Layer.effect(
     const disconnect = Effect.fn("MCP.disconnect")(function* (name: string) {
       const s = yield* InstanceState.get(state)
       yield* closeClient(s, name)
-      delete s.clients[name]
-      s.status[name] = { status: "disabled" }
+      setRuntimeStatus(s, name, { status: "disabled" })
     })
 
-    const tools = Effect.fn("MCP.tools")(function* () {
+    const toolsForContext = Effect.fn("MCP.toolsForContext")(function* (context: ToolsContext) {
       const result: Record<string, Tool> = {}
       const s = yield* InstanceState.get(state)
 
@@ -662,31 +1181,76 @@ export const layer = Layer.effect(
       const config = cfg.mcp ?? {}
       const defaultTimeout = cfg.experimental?.mcp_timeout
 
-      const connectedClients = Object.entries(s.clients).filter(
-        ([clientName]) => s.status[clientName]?.status === "connected",
-      )
+      const serverNames = new Set([
+        ...Object.keys(config),
+        ...connectedSharedRuntimes(s).map((runtime) => runtime.serverName),
+      ])
+      const bridge = yield* EffectBridge.make()
+      const runtimes = (
+        yield* Effect.forEach(
+          Array.from(serverNames),
+          (serverName) =>
+            Effect.gen(function* () {
+          const raw = config[serverName]
+          const configured = raw && isMcpConfigured(raw) ? raw : undefined
+          const mcpConfig = configured ?? sharedRuntime(s, serverName)?.config
+              const runtime = yield* runtimeForContext(s, serverName, mcpConfig, context, bridge)
+          if (runtime?.status.status !== "connected" || !runtime.client) return undefined
+          return { runtime, mcpConfig }
+            }),
+          { concurrency: "unbounded" },
+        )
+      ).filter((item): item is RuntimeToolEntry => !!item)
 
       yield* Effect.forEach(
-        connectedClients,
-        ([clientName, client]) =>
+        runtimes,
+        ({ runtime, mcpConfig }) =>
           Effect.gen(function* () {
-            const mcpConfig = config[clientName]
-            const entry = mcpConfig && isMcpConfigured(mcpConfig) ? mcpConfig : undefined
+            const clientName = runtime.serverName
+            const client = runtime.client!
 
-            const listed = s.defs[clientName]
+            const listed = runtime.defs
             if (!listed) {
-              log.warn("missing cached tools for connected server", { clientName })
+              log.warn("missing cached tools for connected server", { clientName, runtimeKey: runtime.key })
               return
             }
 
-            const timeout = entry?.timeout ?? defaultTimeout
+            runtime.lastUsed = Date.now()
+            const timeout = mcpConfig?.timeout ?? defaultTimeout
             for (const mcpTool of listed) {
-              result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = convertMcpTool(mcpTool, client, timeout)
+              const mode = mcpConfig ? ConfigMCP.effectiveIsolationMode(mcpConfig) : "shared_serial"
+              const shouldQueue =
+                runtime.scope.type === "shared" &&
+                mode === "shared_serial" &&
+                !!context.graphSessionID &&
+                !!context.nodeID
+
+              result[sanitize(clientName) + "_" + sanitize(mcpTool.name)] = convertMcpTool(
+                mcpTool,
+                client,
+                timeout,
+                shouldQueue
+                  ? ({ abort, execute }) =>
+                      runSharedSerial({
+                        serverName: clientName,
+                        runtimeKey: runtime.key,
+                        toolName: mcpTool.name,
+                        context,
+                        abort,
+                        timeout: DEFAULT_QUEUE_TIMEOUT,
+                        execute,
+                      })
+                  : undefined,
+              )
             }
           }),
         { concurrency: "unbounded" },
       )
       return result
+    })
+
+    const tools = Effect.fn("MCP.tools")(function* () {
+      return yield* toolsForContext({})
     })
 
     function collectFromConnected<T extends { name: string }>(
@@ -695,9 +1259,15 @@ export const layer = Layer.effect(
       label: string,
     ) {
       return Effect.forEach(
-        Object.entries(s.clients).filter(([name]) => s.status[name]?.status === "connected"),
-        ([clientName, client]) =>
-          fetchFromClient(clientName, client, listFn, label).pipe(Effect.map((items) => Object.entries(items ?? {}))),
+        connectedSharedRuntimes(s),
+        (runtime) => {
+          const clientName = runtime.serverName
+          const client = runtime.client!
+          runtime.lastUsed = Date.now()
+          return fetchFromClient(clientName, client, listFn, label).pipe(
+            Effect.map((items) => Object.entries(items ?? {})),
+          )
+        },
         { concurrency: "unbounded" },
       ).pipe(Effect.map((results) => Object.fromEntries<T & { client: string }>(results.flat())))
     }
@@ -719,11 +1289,13 @@ export const layer = Layer.effect(
       meta?: Record<string, unknown>,
     ) {
       const s = yield* InstanceState.get(state)
-      const client = s.clients[clientName]
+      const runtime = sharedRuntime(s, clientName)
+      const client = runtime?.client
       if (!client) {
         log.warn(`client not found for ${label}`, { clientName })
         return undefined
       }
+      runtime.lastUsed = Date.now()
       return yield* Effect.tryPromise({
         try: () => fn(client),
         catch: (e: any) => {
@@ -925,6 +1497,8 @@ export const layer = Layer.effect(
       status,
       clients,
       tools,
+      toolsForContext,
+      exclusiveServers,
       prompts,
       resources,
       add,

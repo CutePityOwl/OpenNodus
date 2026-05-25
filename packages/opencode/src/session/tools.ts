@@ -21,6 +21,7 @@ import { SessionProcessor } from "./processor"
 import { MessageID, PartID } from "./schema"
 import * as Log from "@opencode-ai/core/util/log"
 import { EffectBridge } from "@/effect/bridge"
+import { findExclusiveMcpParallelConflict } from "./graph-agent-mcp-scheduler"
 
 const log = Log.create({ service: "session.tools" })
 const ORCHESTRATOR_BLOCKED_TOOLS = new Set(["edit", "write", "apply_patch", "patch"])
@@ -340,6 +341,31 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                     ),
                   )
                 }
+
+                const exclusiveServers = (yield* mcp.exclusiveServers()).map((name) => ({ name }))
+                const conflict = findExclusiveMcpParallelConflict({ servers: exclusiveServers, calls: planned })
+                if (conflict) {
+                  const agents = conflict.targets.map((target) => target.name).join(" and ")
+                  log.warn("parallel graph_agent rejected due to exclusive MCP conflict", {
+                    serverName: conflict.serverName,
+                    agents: conflict.targets.map((target) => ({ id: target.id, name: target.name })),
+                  })
+                  ctx.metadata({
+                    title: "MCP scheduler",
+                    metadata: {
+                      mode,
+                      status: "rejected",
+                      reason: "exclusive_mcp_conflict",
+                      mcpServer: conflict.serverName,
+                      agentNodeIDs: conflict.targets.map((target) => target.id),
+                    },
+                  })
+                  return yield* Effect.fail(
+                    new Error(
+                      `Parallel call rejected because ${agents} both have access to exclusive MCP server "${conflict.serverName}". Run these calls sequentially or change the MCP isolation mode.`,
+                    ),
+                  )
+                }
               }
 
               const runCall = (call: PlannedGraphAgentCall) =>
@@ -487,6 +513,12 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
                   graphSessionID: current.node.graphSessionID,
                   orchestratorNodeID: current.node.id,
                   mode,
+                  mcpScheduling:
+                    mode === "parallel"
+                      ? {
+                          exclusivePreflight: "passed",
+                        }
+                      : undefined,
                   calls: results.map((result, index) => ({
                     index,
                     status: result.status,
@@ -503,7 +535,16 @@ export const resolve = Effect.fn("SessionTools.resolve")(function* (input: {
     }
   }
 
-  for (const [key, item] of Object.entries(yield* mcp.tools())) {
+  const mcpTools =
+    Option.isSome(graphContext)
+      ? yield* mcp.toolsForContext({
+          graphSessionID: graphContext.value.graph.state.graphSessionID,
+          nodeID: graphContext.value.node.id,
+          nodeType: graphContext.value.node.type,
+        })
+      : yield* mcp.tools()
+
+  for (const [key, item] of Object.entries(mcpTools)) {
     const execute = item.execute
     if (!execute) continue
 

@@ -17,6 +17,7 @@ import { useSync } from "@/context/sync"
 import { useCheckServerHealth, type ServerHealth } from "@/utils/server-health"
 import { useQueryOptions } from "@/context/global-sync"
 import { pathKey } from "@/utils/path-key"
+import type { Config } from "@opencode-ai/sdk/v2/client"
 
 const pollMs = 10_000
 
@@ -166,6 +167,17 @@ const useMcpToggleMutation = () => {
   }))
 }
 
+type McpConfig = NonNullable<Config["mcp"]>[string] & {
+  allowMultipleNodes?: boolean
+  isolation?: {
+    mode?: "shared" | "shared_serial" | "isolated_per_node" | "isolated_per_call" | "exclusive"
+  }
+}
+type ConfiguredMcpConfig = McpConfig & { type: "local" | "remote" }
+
+const isConfiguredMcpConfig = (config: McpConfig | undefined): config is ConfiguredMcpConfig =>
+  !!config && "type" in config
+
 export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const sync = useSync()
   const server = useServer()
@@ -173,6 +185,10 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const dialog = useDialog()
   const language = useLanguage()
   const navigate = useNavigate()
+  const sdk = useSDK()
+  const queryClient = useQueryClient()
+  const queryOptions = useQueryOptions()
+  const [expandedMcp, setExpandedMcp] = createStore({} as Record<string, boolean>)
 
   const fail = (err: unknown) => {
     showToast({
@@ -205,7 +221,26 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
   const defaultServer = useDefaultServerKey(platform.getDefaultServer)
   const mcpNames = createMemo(() => Object.keys(sync.data.mcp ?? {}).sort((a, b) => a.localeCompare(b)))
   const mcpStatus = (name: string) => sync.data.mcp?.[name]?.status
+  const mcpConfig = (name: string) => sync.data.config.mcp?.[name] as McpConfig | undefined
   const mcpConnected = createMemo(() => mcpNames().filter((name) => mcpStatus(name) === "connected").length)
+  const updateMcpConfig = useMutation(() => ({
+    mutationFn: async (input: { name: string; config: ConfiguredMcpConfig; before: ConfiguredMcpConfig }) => {
+      sync.set("config", "mcp", input.name, input.config)
+      await sdk.client.config.update({ config: { mcp: { [input.name]: input.config } } })
+      return input
+    },
+    onSuccess: () => {
+      queryClient.refetchQueries(queryOptions.mcp(pathKey(sync.directory)))
+    },
+    onError: (err, input) => {
+      sync.set("config", "mcp", input.name, input.before)
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: err instanceof Error ? err.message : String(err),
+      })
+    },
+  }))
   const lspItems = createMemo(() => sync.data.lsp ?? [])
   const lspCount = createMemo(() => lspItems().length)
   const plugins = createMemo(() =>
@@ -321,47 +356,112 @@ export function StatusPopoverBody(props: { shown: Accessor<boolean> }) {
                   {(name) => {
                     const status = () => mcpStatus(name)
                     const enabled = () => status() === "connected"
+                    const config = () => mcpConfig(name)
+                    const expanded = () => expandedMcp[name] ?? false
+                    const allowMultipleNodes = () => config()?.allowMultipleNodes === true
+                    const canPersist = () => isConfiguredMcpConfig(config())
+                    const configType = () => {
+                      const current = config()
+                      return isConfiguredMcpConfig(current) ? current.type : undefined
+                    }
+                    const toggleAllowMultipleNodes = () => {
+                      const before = config()
+                      if (!isConfiguredMcpConfig(before) || updateMcpConfig.isPending) return
+                      const next = {
+                        ...before,
+                        allowMultipleNodes: !allowMultipleNodes(),
+                      }
+                      updateMcpConfig.mutate({ name, config: next, before })
+                    }
                     return (
-                      <button
-                        type="button"
-                        class="flex items-center gap-2 w-full min-h-8 pl-3 pr-2 py-1 rounded-md hover:bg-surface-raised-base-hover transition-colors text-left"
-                        onClick={() => {
-                          if (toggleMcp.isPending) return
-                          toggleMcp.mutate(name)
-                        }}
-                        disabled={toggleMcp.isPending && toggleMcp.variables === name}
-                      >
-                        <div
-                          classList={{
-                            "size-1.5 rounded-full shrink-0": true,
-                            "bg-icon-success-base": status() === "connected",
-                            "bg-icon-critical-base": status() === "failed",
-                            "bg-border-weak-base": status() === "disabled",
-                            "bg-icon-warning-base":
-                              status() === "needs_auth" || status() === "needs_client_registration",
-                          }}
-                        />
-                        <span class="flex flex-col min-w-0 flex-1">
-                          <span class="flex items-center gap-2 min-w-0">
-                            <span class="text-14-regular text-text-base truncate">{name}</span>
-                          </span>
-                          <Show when={status() === "needs_auth"}>
-                            <span class="text-11-regular text-text-weaker truncate">
-                              {language.t("mcp.auth.clickToAuthenticate")}
-                            </span>
-                          </Show>
-                        </span>
-                        <div onClick={(event) => event.stopPropagation()}>
-                          <Switch
-                            checked={enabled()}
-                            disabled={toggleMcp.isPending && toggleMcp.variables === name}
-                            onChange={() => {
+                      <div class="flex flex-col rounded-md hover:bg-surface-raised-base-hover transition-colors">
+                        <div class="flex items-center gap-2 w-full min-h-8 pl-1.5 pr-2 py-1 text-left">
+                          <button
+                            type="button"
+                            class="size-6 flex items-center justify-center rounded-sm text-icon-weak hover:text-icon-base"
+                            aria-label={expanded() ? "Collapse MCP settings" : "Expand MCP settings"}
+                            onClick={(event) => {
+                              event.stopPropagation()
+                              setExpandedMcp(name, !expanded())
+                            }}
+                          >
+                            <Icon name={expanded() ? "chevron-down" : "chevron-right"} size="small" />
+                          </button>
+                          <button
+                            type="button"
+                            class="flex items-center gap-2 min-w-0 flex-1 text-left"
+                            onClick={() => {
                               if (toggleMcp.isPending) return
                               toggleMcp.mutate(name)
                             }}
-                          />
+                            disabled={toggleMcp.isPending && toggleMcp.variables === name}
+                          >
+                            <div
+                              classList={{
+                                "size-1.5 rounded-full shrink-0": true,
+                                "bg-icon-success-base": status() === "connected",
+                                "bg-icon-critical-base": status() === "failed",
+                                "bg-border-weak-base": status() === "disabled",
+                                "bg-icon-warning-base":
+                                  status() === "needs_auth" || status() === "needs_client_registration",
+                              }}
+                            />
+                            <span class="flex flex-col min-w-0 flex-1">
+                              <span class="flex items-center gap-2 min-w-0">
+                                <span class="text-14-regular text-text-base truncate">{name}</span>
+                              </span>
+                              <Show when={status() === "needs_auth"}>
+                                <span class="text-11-regular text-text-weaker truncate">
+                                  {language.t("mcp.auth.clickToAuthenticate")}
+                                </span>
+                              </Show>
+                            </span>
+                          </button>
+                          <div onClick={(event) => event.stopPropagation()}>
+                            <Switch
+                              checked={enabled()}
+                              disabled={toggleMcp.isPending && toggleMcp.variables === name}
+                              onChange={() => {
+                                if (toggleMcp.isPending) return
+                                toggleMcp.mutate(name)
+                              }}
+                            />
+                          </div>
                         </div>
-                      </button>
+                        <Show when={expanded()}>
+                          <div class="flex flex-col gap-2 ml-9 mr-2 mb-2 rounded-sm border border-border-weak-base bg-surface-base px-3 py-2">
+                            <div class="flex items-start justify-between gap-3">
+                              <div class="flex flex-col gap-1 min-w-0">
+                                <span class="text-12-medium text-text-base">Allow multiple nodes (experimental)</span>
+                                <span class="text-11-regular text-text-weaker leading-4">
+                                  This setting will allow multiple agents to use this MCP in parallel, each one with
+                                  its own virtual environment, ports, and paths.
+                                </span>
+                              </div>
+                              <Switch
+                                checked={allowMultipleNodes()}
+                                disabled={!canPersist() || updateMcpConfig.isPending}
+                                onChange={toggleAllowMultipleNodes}
+                              />
+                            </div>
+                            <Show when={!canPersist()}>
+                              <span class="text-11-regular text-text-weaker">
+                                This MCP was added at runtime, so its graph-node setting cannot be persisted yet.
+                              </span>
+                            </Show>
+                            <Show when={configType() === "remote" && allowMultipleNodes()}>
+                              <span class="text-11-regular text-icon-warning-base">
+                                Remote MCP servers may still share server-side state.
+                              </span>
+                            </Show>
+                            <Show when={configType() === "local" && allowMultipleNodes()}>
+                              <span class="text-11-regular text-text-weaker">
+                                Local stdio MCP servers use isolated per-node runtimes where supported.
+                              </span>
+                            </Show>
+                          </div>
+                        </Show>
+                      </div>
                     )
                   }}
                 </For>

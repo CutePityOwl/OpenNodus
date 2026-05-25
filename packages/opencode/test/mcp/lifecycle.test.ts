@@ -1,4 +1,4 @@
-import { expect, mock, beforeEach } from "bun:test"
+import { expect, mock, beforeEach, test } from "bun:test"
 import { Effect, Exit } from "effect"
 import type { MCP as MCPNS } from "../../src/mcp/index"
 import { testEffect } from "../lib/effect"
@@ -16,6 +16,10 @@ interface MockClientState {
   listResourcesShouldFail: boolean
   prompts: Array<{ name: string; description?: string }>
   resources: Array<{ name: string; uri: string; description?: string }>
+  callToolCalls: number
+  activeToolCalls: number
+  maxConcurrentToolCalls: number
+  callToolDelayMs: number
   closed: boolean
   notificationHandlers: Map<unknown, (...args: any[]) => any>
 }
@@ -29,6 +33,7 @@ let connectError = "Mock transport cannot connect"
 let clientCreateCount = 0
 // Tracks how many times transport.close() is called across all mock transports
 let transportCloseCount = 0
+const stdioTransportOptions: any[] = []
 
 function getOrCreateClientState(name?: string): MockClientState {
   const key = name ?? "default"
@@ -44,6 +49,10 @@ function getOrCreateClientState(name?: string): MockClientState {
       listResourcesShouldFail: false,
       prompts: [],
       resources: [],
+      callToolCalls: 0,
+      activeToolCalls: 0,
+      maxConcurrentToolCalls: 0,
+      callToolDelayMs: 0,
       closed: false,
       notificationHandlers: new Map(),
     }
@@ -57,7 +66,9 @@ class MockStdioTransport {
   stderr: null = null
   pid = 12345
   // oxlint-disable-next-line no-useless-constructor
-  constructor(_opts: any) {}
+  constructor(opts: any) {
+    stdioTransportOptions.push(opts)
+  }
   async start() {
     if (connectShouldHang) return new Promise<void>(() => {}) // never resolves
     if (connectShouldFail) throw new Error(connectError)
@@ -147,6 +158,25 @@ void mock.module("@modelcontextprotocol/sdk/client/index.js", () => ({
       throw new Error(`unsupported request: ${request.method}`)
     }
 
+    async callTool(params: { name: string; arguments?: Record<string, unknown> }) {
+      if (this._state) {
+        this._state.callToolCalls++
+        this._state.activeToolCalls++
+        this._state.maxConcurrentToolCalls = Math.max(
+          this._state.maxConcurrentToolCalls,
+          this._state.activeToolCalls,
+        )
+      }
+      try {
+        if (this._state?.callToolDelayMs) {
+          await new Promise((resolve) => setTimeout(resolve, this._state.callToolDelayMs))
+        }
+        return { content: [{ type: "text", text: `called ${params.name}` }] }
+      } finally {
+        if (this._state) this._state.activeToolCalls--
+      }
+    }
+
     async listPrompts() {
       if (this._state?.listPromptsShouldFail) {
         throw new Error("listPrompts failed")
@@ -175,6 +205,7 @@ beforeEach(() => {
   connectError = "Mock transport cannot connect"
   clientCreateCount = 0
   transportCloseCount = 0
+  stdioTransportOptions.length = 0
 })
 
 // Import after mocks
@@ -187,6 +218,80 @@ function statusName(status: Record<string, MCPNS.Status> | MCPNS.Status, server:
   if ("status" in status) return status.status
   return status[server]?.status
 }
+
+test("runtime key helpers preserve shared behavior and encode graph scopes", () => {
+  expect(MCP.sharedRuntimeKey("playwright")).toBe("playwright")
+  expect(
+    MCP.nodeRuntimeKey({
+      serverName: "playwright",
+      graphSessionID: "ses_123",
+      nodeID: "gnode_agent 1",
+    }),
+  ).toBe("playwright::graph_session=ses_123::node=gnode_agent%201")
+  expect(
+    MCP.callRuntimeKey({
+      serverName: "playwright",
+      graphSessionID: "ses_123",
+      nodeID: "gnode_agent 1",
+      callID: "call/1",
+    }),
+  ).toBe("playwright::graph_session=ses_123::node=gnode_agent%201::call=call%2F1")
+})
+
+test("runtimeDirectory generates stable per-node and per-call paths", () => {
+  const nodeDir = MCP.runtimeDirectory({
+    root: "data",
+    workspaceHash: "workspace:1",
+    graphSessionID: "ses_123",
+    nodeID: "gnode_agent 1",
+    serverName: "playwright/mcp",
+  })
+  expect(nodeDir.replaceAll("\\", "/")).toBe("data/mcp-runtimes/workspace_1/ses_123/gnode_agent_1/playwright_mcp")
+
+  const callDir = MCP.runtimeDirectory({
+    root: "data",
+    workspaceHash: "workspace:1",
+    graphSessionID: "ses_123",
+    nodeID: "gnode_agent 1",
+    serverName: "playwright/mcp",
+    callID: "call/1",
+  })
+  expect(callDir.replaceAll("\\", "/")).toBe(
+    "data/mcp-runtimes/workspace_1/ses_123/gnode_agent_1/playwright_mcp/calls/call_1",
+  )
+})
+
+it.instance(
+  "exclusiveServers returns enabled MCP servers configured as exclusive",
+  () =>
+    MCP.Service.use((mcp: MCPNS.Interface) =>
+      Effect.gen(function* () {
+        expect(yield* mcp.exclusiveServers()).toEqual(["exclusive-server"])
+      }),
+    ),
+  {
+    config: {
+      mcp: {
+        "exclusive-server": {
+          type: "local",
+          command: ["echo", "exclusive"],
+          isolation: { mode: "exclusive" },
+        },
+        "serial-server": {
+          type: "local",
+          command: ["echo", "serial"],
+          isolation: { mode: "shared_serial" },
+        },
+        "disabled-exclusive-server": {
+          type: "local",
+          command: ["echo", "disabled"],
+          enabled: false,
+          isolation: { mode: "exclusive" },
+        },
+      },
+    },
+  },
+)
 
 // ========================================================================
 // Test: tools() are cached after connect
@@ -217,6 +322,131 @@ it.instance(
         expect(Object.keys(toolsA).length).toBeGreaterThan(0)
         expect(Object.keys(toolsB).length).toBeGreaterThan(0)
         expect(serverState.listToolsCalls).toBe(1)
+      }),
+    ),
+  { config: { mcp: {} } },
+)
+
+it.instance(
+  "toolsForContext preserves shared tool names for graph nodes",
+  () =>
+    MCP.Service.use((mcp: MCPNS.Interface) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "ctx-server"
+        const serverState = getOrCreateClientState("ctx-server")
+        serverState.tools = [
+          { name: "do_thing", description: "does a thing", inputSchema: { type: "object", properties: {} } },
+        ]
+
+        yield* mcp.add("ctx-server", {
+          type: "local",
+          command: ["echo", "test"],
+          allowMultipleNodes: true,
+        })
+
+        const defaultTools = yield* mcp.tools()
+        const nodeTools = yield* mcp.toolsForContext({
+          graphSessionID: "ses_123",
+          nodeID: "gnode_agent_1",
+          nodeType: "agent",
+        })
+
+        expect(Object.keys(nodeTools)).toEqual(Object.keys(defaultTools))
+        expect(Object.keys(nodeTools)).toEqual(["ctx-server_do_thing"])
+        expect(serverState.listToolsCalls).toBe(2)
+      }),
+    ),
+  { config: { mcp: {} } },
+)
+
+it.instance(
+  "toolsForContext queues shared-serial MCP calls for graph nodes",
+  () =>
+    MCP.Service.use((mcp: MCPNS.Interface) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "queue-server"
+        const serverState = getOrCreateClientState("queue-server")
+        serverState.tools = [
+          { name: "slow_tool", description: "slow", inputSchema: { type: "object", properties: {} } },
+        ]
+        serverState.callToolDelayMs = 25
+
+        yield* mcp.add("queue-server", {
+          type: "local",
+          command: ["echo", "test"],
+        })
+
+        const tools = yield* mcp.toolsForContext({
+          graphSessionID: "ses_123",
+          nodeID: "gnode_agent_1",
+          nodeType: "agent",
+        })
+        const tool = tools["queue-server_slow_tool"]
+        expect(tool?.execute).toBeDefined()
+
+        const firstAbort = new AbortController()
+        const secondAbort = new AbortController()
+        yield* Effect.promise(() =>
+          Promise.all([
+            tool!.execute!({}, { toolCallId: "call_1", abortSignal: firstAbort.signal } as any),
+            tool!.execute!({}, { toolCallId: "call_2", abortSignal: secondAbort.signal } as any),
+          ]),
+        )
+
+        expect(serverState.callToolCalls).toBe(2)
+        expect(serverState.maxConcurrentToolCalls).toBe(1)
+      }),
+    ),
+  { config: { mcp: {} } },
+)
+
+it.instance(
+  "toolsForContext creates isolated local stdio runtimes per graph node",
+  () =>
+    MCP.Service.use((mcp: MCPNS.Interface) =>
+      Effect.gen(function* () {
+        lastCreatedClientName = "isolated-server"
+        const serverState = getOrCreateClientState("isolated-server")
+        serverState.tools = [
+          { name: "node_tool", description: "node", inputSchema: { type: "object", properties: {} } },
+        ]
+
+        yield* mcp.add("isolated-server", {
+          type: "local",
+          command: ["echo", "{nodeID}"],
+          allowMultipleNodes: true,
+          isolation: {
+            commandTemplate: ["echo", "{nodeID}"],
+            environmentTemplate: {
+              NODE_MARKER: "{nodeID}",
+            },
+          },
+        })
+
+        const nodeA = yield* mcp.toolsForContext({
+          graphSessionID: "ses_123",
+          nodeID: "gnode_agent_a",
+          nodeType: "agent",
+        })
+        const nodeB = yield* mcp.toolsForContext({
+          graphSessionID: "ses_123",
+          nodeID: "gnode_agent_b",
+          nodeType: "agent",
+        })
+
+        expect(Object.keys(nodeA)).toEqual(["isolated-server_node_tool"])
+        expect(Object.keys(nodeB)).toEqual(["isolated-server_node_tool"])
+        expect(clientCreateCount).toBe(3)
+
+        const isolatedOptions = stdioTransportOptions.slice(1)
+        expect(isolatedOptions.length).toBe(2)
+        expect(isolatedOptions[0].args).toEqual(["gnode_agent_a"])
+        expect(isolatedOptions[1].args).toEqual(["gnode_agent_b"])
+        expect(isolatedOptions[0].env.NODE_MARKER).toBe("gnode_agent_a")
+        expect(isolatedOptions[1].env.NODE_MARKER).toBe("gnode_agent_b")
+        expect(isolatedOptions[0].env.OPENNODUS_MCP_RUNTIME_DIR).not.toBe(
+          isolatedOptions[1].env.OPENNODUS_MCP_RUNTIME_DIR,
+        )
       }),
     ),
   { config: { mcp: {} } },

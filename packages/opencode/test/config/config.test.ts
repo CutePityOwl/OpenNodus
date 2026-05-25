@@ -2,6 +2,7 @@ import { test, expect, describe, mock, afterEach, beforeEach } from "bun:test"
 import { Effect, Exit, Layer, Option } from "effect"
 import { NodeFileSystem, NodePath } from "@effect/platform-node"
 import { Config } from "@/config/config"
+import { ConfigMCP } from "@/config/mcp"
 import { ConfigManaged } from "@/config/managed"
 import { ConfigParse } from "../../src/config/parse"
 import { EffectFlock } from "@opencode-ai/core/util/effect-flock"
@@ -1415,6 +1416,156 @@ test("config parser preserves permission order while rejecting unknown top-level
 })
 
 // MCP config merging tests
+
+test("MCP config parses OpenNodus isolation settings", () => {
+  const config = ConfigParse.schema(
+    Config.Info,
+    {
+      mcp: {
+        playwright: {
+          type: "local",
+          command: ["npx", "@playwright/mcp@latest"],
+          allowMultipleNodes: true,
+          isolation: {
+            mode: "isolated_per_node",
+            stateful: true,
+            runtimeDir: "{opennodus_runtime_dir}",
+            injectRuntimeEnv: true,
+            commandTemplate: [
+              "npx",
+              "@playwright/mcp@latest",
+              "--user-data-dir={opennodus_runtime_dir}/profile",
+            ],
+            environmentTemplate: {
+              PLAYWRIGHT_BROWSERS_PATH: "{opennodus_runtime_dir}/browsers",
+            },
+            port: {
+              strategy: "auto",
+              env: "PLAYWRIGHT_MCP_PORT",
+              arg: "--port={opennodus_port}",
+            },
+            idleTimeoutMs: 60000,
+          },
+        },
+        remoteDocs: {
+          type: "remote",
+          url: "https://docs.example.com/mcp",
+          allowMultipleNodes: false,
+          isolation: {
+            mode: "shared_serial",
+          },
+        },
+      },
+    },
+    "test:mcp-isolation",
+  )
+
+  expect(config.mcp?.playwright).toEqual({
+    type: "local",
+    command: ["npx", "@playwright/mcp@latest"],
+    allowMultipleNodes: true,
+    isolation: {
+      mode: "isolated_per_node",
+      stateful: true,
+      runtimeDir: "{opennodus_runtime_dir}",
+      injectRuntimeEnv: true,
+      commandTemplate: ["npx", "@playwright/mcp@latest", "--user-data-dir={opennodus_runtime_dir}/profile"],
+      environmentTemplate: {
+        PLAYWRIGHT_BROWSERS_PATH: "{opennodus_runtime_dir}/browsers",
+      },
+      port: {
+        strategy: "auto",
+        env: "PLAYWRIGHT_MCP_PORT",
+        arg: "--port={opennodus_port}",
+      },
+      idleTimeoutMs: 60000,
+    },
+  })
+  expect(config.mcp?.remoteDocs).toEqual({
+    type: "remote",
+    url: "https://docs.example.com/mcp",
+    allowMultipleNodes: false,
+    isolation: {
+      mode: "shared_serial",
+    },
+  })
+})
+
+test("legacy MCP config still parses without isolation settings", () => {
+  const config = ConfigParse.schema(
+    Config.Info,
+    {
+      mcp: {
+        local: {
+          type: "local",
+          command: ["node", "server.js"],
+          environment: {
+            NODE_ENV: "test",
+          },
+        },
+        remote: {
+          type: "remote",
+          url: "https://remote.example.com/mcp",
+          headers: {
+            Authorization: "Bearer test",
+          },
+          oauth: false,
+        },
+        disabled: {
+          enabled: false,
+        },
+      },
+    },
+    "test:mcp-legacy",
+  )
+
+  expect(config.mcp?.local).toEqual({
+    type: "local",
+    command: ["node", "server.js"],
+    environment: {
+      NODE_ENV: "test",
+    },
+  })
+  expect(config.mcp?.remote).toEqual({
+    type: "remote",
+    url: "https://remote.example.com/mcp",
+    headers: {
+      Authorization: "Bearer test",
+    },
+    oauth: false,
+  })
+  expect(config.mcp?.disabled).toEqual({
+    enabled: false,
+  })
+})
+
+test("MCP effective isolation mode maps product setting to runtime default", () => {
+  expect(
+    ConfigMCP.effectiveIsolationMode({
+      type: "local",
+      command: ["node", "server.js"],
+    }),
+  ).toBe("shared_serial")
+
+  expect(
+    ConfigMCP.effectiveIsolationMode({
+      type: "local",
+      command: ["node", "server.js"],
+      allowMultipleNodes: true,
+    }),
+  ).toBe("isolated_per_node")
+
+  expect(
+    ConfigMCP.effectiveIsolationMode({
+      type: "remote",
+      url: "https://remote.example.com/mcp",
+      allowMultipleNodes: true,
+      isolation: {
+        mode: "exclusive",
+      },
+    }),
+  ).toBe("exclusive")
+})
 
 it.instance("project config can override MCP server enabled status", () =>
   Effect.gen(function* () {
